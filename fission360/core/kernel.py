@@ -65,6 +65,21 @@ from OCP.gp import (gp_Ax1, gp_Ax2, gp_Ax3, gp_Circ, gp_Dir, gp_Pln, gp_Pnt, gp_
 FUZZY = 1e-5
 
 
+def _quiet_occt():
+    """Silence OCCT's console printer (STEP/IGES transfer statistics)."""
+    if os.environ.get("FISSION360_OCCT_VERBOSE"):
+        return
+    try:
+        from OCP.Message import Message, Message_Gravity
+        for p in list(Message.DefaultMessenger_s().Printers()):
+            p.SetTraceLevel(Message_Gravity.Message_Fail)
+    except Exception:
+        pass
+
+
+_quiet_occt()
+
+
 class KernelError(Exception):
     pass
 

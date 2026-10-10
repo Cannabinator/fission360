@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fission360"
+version = "0.1.0"
+description = "Parametric 3D CAD for Linux, inspired by Fusion 360 (OpenCASCADE + Qt 6 + OpenGL)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "LGPL-2.1-or-later" }
+dependencies = [
+    "cadquery-ocp>=7.7",
+    "PySide6>=6.5",
+    "PyOpenGL>=3.1.7",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+fission360 = "fission360.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["fission360*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

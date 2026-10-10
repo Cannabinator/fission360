@@ -57,10 +57,15 @@ class Ribbon(QWidget):
         self.body_lay = QHBoxLayout(self.body)
         self.body_lay.setContentsMargins(0, 2, 0, 0)
         self.body_lay.setSpacing(4)
-        from PySide6.QtWidgets import QSizePolicy
-        self.body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        v.addWidget(self.body)
+        from PySide6.QtWidgets import QScrollArea
+        sc = QScrollArea()
+        sc.setWidget(self.body)
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        sc.setFixedHeight(108)
+        v.addWidget(sc)
         self.tabs = {}
         self.tab_buttons = {}
         self.current = None

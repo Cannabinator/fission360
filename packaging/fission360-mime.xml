@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-fission360">
+    <comment>Fission360 design</comment>
+    <glob pattern="*.f3x"/>
+  </mime-type>
+</mime-info>

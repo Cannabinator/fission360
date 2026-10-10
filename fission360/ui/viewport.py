@@ -125,6 +125,8 @@ class Viewport(QOpenGLWidget):
         self.tool_points = G.Batch()
         self._grid_key = None
         self._sketch_elem: dict[int, tuple] = {}   # pick id -> descriptor
+        self._profiles_cache: dict[str, list] = {}  # sketch id -> profile faces as displayed
+        self._plane_list: list = []
         self._press = None
         self._last = None
         self._nav = None

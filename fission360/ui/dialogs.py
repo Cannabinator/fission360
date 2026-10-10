@@ -269,7 +269,7 @@ class MarkingMenu(QWidget):
         self.setMouseTracking(True)
         self.items = items[:8]          # (label, icon, callback)
         self.overflow = list(overflow)
-        self.R = 105
+        self.R = 112
         self.hover = None
         n_over = len(self.overflow)
         self.resize(2 * self.R + 200, 2 * self.R + 80 + n_over * 24)
@@ -281,7 +281,7 @@ class MarkingMenu(QWidget):
 
     def _slot_rect(self, i):
         ang = -math.pi / 2 + i * 2 * math.pi / 8
-        c = self.center + QPointF(math.cos(ang) * self.R, math.sin(ang) * self.R * 0.85)
+        c = self.center + QPointF(math.cos(ang) * self.R, math.sin(ang) * self.R)
         return QRectF(c.x() - 62, c.y() - 13, 124, 26)
 
     def _over_rect(self, i):
@@ -330,7 +330,7 @@ class MarkingMenu(QWidget):
         # gesture: direction from centre selects the slot
         d = pos - self.center
         if math.hypot(d.x(), d.y()) > 40 and math.hypot(d.x(), d.y()) < self.R + 60:
-            ang = math.atan2(d.y() / 0.85, d.x()) + math.pi / 2
+            ang = math.atan2(d.y(), d.x()) + math.pi / 2
             i = int(round(ang / (2 * math.pi / 8))) % 8
             if i < len(self.items):
                 return ("s", i)
