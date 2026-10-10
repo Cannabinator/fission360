@@ -17,6 +17,36 @@ fission360                # or: fission360 part.f3x
 For development: `./scripts/run-dev.sh` (creates `.venv`, editable install).
 Tests: `pytest` (UI smoke test runs when a display is available, e.g. `xvfb-run -a pytest`).
 
+### Remote access from Windows (browser or VNC, for testing)
+
+`scripts/remote.sh` runs the app on a virtual display (Xvfb, software OpenGL)
+and serves it with x11vnc + noVNC. Missing packages are installed via apt.
+The app runs fullscreen and restarts automatically if you close it.
+
+**Option A – SSH tunnel (default, nothing exposed to the network)**
+
+On the Linux machine:
+```bash
+./scripts/remote.sh                 # options: --size 1920x1080  --port 6080  [file.f3x]
+```
+On Windows 11 (PowerShell, OpenSSH is built in):
+```powershell
+ssh -L 6080:localhost:6080 -L 5900:localhost:5900 user@linux-host
+```
+Then open <http://localhost:6080/vnc.html?autoconnect=1&resize=scale> in Edge/Chrome,
+or connect a VNC client (TightVNC, RealVNC) to `localhost:5900`.
+
+**Option B – direct on a trusted LAN**
+```bash
+./scripts/remote.sh --public        # prints URL + generated VNC password
+```
+Open `http://<linux-ip>:6080/vnc.html` from Windows. VNC traffic isn't encrypted,
+so use option A on any network you don't fully trust.
+
+Tips: in the browser, middle-drag pans and Shift + middle-drag orbits as usual. If your
+mouse lacks a middle button, use right-drag (orbit) and the navigation bar. The noVNC side
+panel has clipboard and fullscreen buttons.
+
 Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Intel driver of the last decade).
 
 ## Features

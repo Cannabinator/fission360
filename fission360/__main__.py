@@ -37,7 +37,12 @@ def main(argv=None):
 
     from .ui.main_window import MainWindow
     win = MainWindow()
-    win.show()
+    if "--fullscreen" in argv:
+        # remote/kiosk mode (no window manager): fill the virtual screen
+        win.setGeometry(app.primaryScreen().geometry())
+        win.showFullScreen()
+    else:
+        win.show()
     files = [a for a in argv[1:] if not a.startswith("-")]
     if files:
         win.open_doc(files[0])
