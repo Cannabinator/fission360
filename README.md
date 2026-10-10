@@ -57,6 +57,17 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 - Live **preview** for every command; the panel is generated from a declarative feature spec.
 - Undo/redo for everything (including individual sketch edits), autosave every 2 min, recent files.
 
+**Fusion-style quality of life**
+- **Drag handles** in the canvas for extrude distances (one side / symmetric / two sides), offset planes, fillet & chamfer size and shell thickness; snaps to zoom-dependent steps (hold Ctrl for free drag).
+- **Press Pull (Q)** and Extrude pick **Join / Cut / New Body automatically** (into material cuts, out of a face joins) until you choose an operation.
+- **Type values while sketching**: after the first click of a line, rectangle or circle just type the length/width/diameter (Tab for the next field or to enter expressions like `width/2`); the values become driving dimensions.
+- Snapping to points, **line midpoints** (adds a midpoint constraint) and curves, with snap glyphs and dashed horizontal/vertical inference guides.
+- **Window / crossing selection**: drag left→right to select fully enclosed items, right→left for anything touched (sketch geometry, bodies, or edges inside the Fillet command).
+- Fillet/chamfer: pick a **face to round all its edges**; **tangent chain** follows smooth edge loops.
+- Value boxes step with **Up/Down or the mouse wheel** (Shift ×0.1, Ctrl ×10) and show the evaluated value in their tooltip; Enter = OK.
+- ViewCube: **26 views** (faces, edges, corners) and **drag the cube to orbit**; **Look At** a selected face; **F6 fits the selection**.
+- Hovering a timeline feature highlights the bodies it created or changed; the status bar names what's under the cursor; inline rename (F2) in the browser; sketch palette toggles for dimensions, constraints and profiles; expression-driven dimensions show as `fx: …`.
+
 **Sketching**
 - Line (chained), 2-point & center rectangle, circle, 3-point & center arc, polygon, slot, spline, point.
 - Snapping to points/curves, horizontal/vertical inference, optional grid snap; auto-coincident constraints.
@@ -80,8 +91,9 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 | Pan | Middle drag |
 | Zoom | Wheel (zooms about the cursor) |
 | Fit | F6 / double-click middle |
-| Commands | S search · E extrude · F fillet · H hole · M move · I measure · Del delete |
-| Sketch | L line · R rectangle · C circle · A arc · D dimension · T trim · P project · X construction · Esc cancel |
+| Commands | S search · E extrude · Q press pull · F fillet · H hole · M move · I measure · F6 fit selection · Del delete |
+| Select | Click · Shift/Ctrl+click add · drag left→right window · right→left crossing |
+| Sketch | L line · R rectangle · C circle · A arc · D dimension · T trim · P project · X construction · Esc cancel · type numbers while drawing, Tab = next field |
 
 ## Architecture & technical decisions
 

@@ -670,6 +670,54 @@ def loft(sections, solid=True, ruled=False):
     return mk.Shape()
 
 
+def tangent_chain(shape, edge_list, tol_deg=1.0):
+    """Extend edges with all tangent-continuous neighbours (G1 chains).
+
+    Fusion's fillet selects the whole tangent chain by default; picking one
+    edge of a rounded rectangle fillets the whole loop.
+    """
+    from OCP.collections import IndexedDataMap_TopoDS_Shape_List_TopoDS_Shape_TopTools_ShapeMapHasher as VEMap
+    m = VEMap()
+    TopExp.MapShapesAndAncestors_s(shape, TopAbs_VERTEX, TopAbs_EDGE, m)
+    all_edges = edges(shape)
+    key = {hash(e): e for e in all_edges}
+    cos_tol = math.cos(math.radians(tol_deg))
+
+    def tangent_at(e, v):
+        c = BRepAdaptor_Curve(e)
+        t0, t1 = c.FirstParameter(), c.LastParameter()
+        p = vertex_point(v)
+        t = t0 if np.linalg.norm(np3(c.Value(t0)) - p) < np.linalg.norm(np3(c.Value(t1)) - p) else t1
+        pt, d = gp_Pnt(), gp_Vec()
+        c.D1(t, pt, d)
+        d = np3(d)
+        n = np.linalg.norm(d)
+        return d / n if n > 1e-12 else d
+
+    seen = {hash(e) for e in edge_list}
+    out = list(edge_list)
+    stack = list(edge_list)
+    while stack:
+        e = stack.pop()
+        for v in subshapes(e, TopAbs_VERTEX):
+            idx = m.FindIndex(v)
+            if idx == 0:
+                continue
+            te = tangent_at(e, v)
+            for other in _iter_list(m.FindFromIndex(idx)):
+                h = hash(other)
+                if h in seen or h not in key:
+                    continue
+                o = key[h]
+                if BRep_Tool.Degenerated_s(o):
+                    continue
+                if abs(float(np.dot(te, tangent_at(o, v)))) >= cos_tol:
+                    seen.add(h)
+                    out.append(o)
+                    stack.append(o)
+    return out
+
+
 def fillet(shape, edge_list, radius):
     mk = BRepFilletAPI_MakeFillet(shape)
     for e in edge_list:

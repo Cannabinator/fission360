@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPen, QPolygonF
 
 from ..core import kernel as K
 from ..core.expressions import format_angle, format_length
@@ -24,7 +24,7 @@ SNAP_PX = 10.0
 class Snap:
     def __init__(self, uv, kind="free", ref=None, hv=None):
         self.uv = np.asarray(uv, float)
-        self.kind = kind     # free | point | curve | grid
+        self.kind = kind     # free | point | mid | curve | grid
         self.ref = ref       # point id or curve id
         self.hv = hv         # inferred alignment: ('h'|'v', pid)
 
@@ -35,6 +35,129 @@ class SketchTool:
 
     def __init__(self, session):
         self.s = session
+        self.cur: Snap | None = None
+        self.anchor_uv = None          # point the inference guides start from
+        self.typed: dict[int, str] = {}
+        self.active_field = 0
+
+    # ---- typed values (Fusion: just start typing while drawing) ----------
+    def fields(self) -> list[tuple[str, str]]:
+        """Value fields available in the current step: (label, kind)."""
+        return []
+
+    def typing(self):
+        return getattr(self, "entry_active", False) or any(v for v in self.typed.values())
+
+    def wants_key(self, ev):
+        if not self.fields():
+            return False
+        t = ev.text()
+        if self.typing():
+            return bool(t and t.isprintable()) or ev.key() in (Qt.Key_Tab, Qt.Key_Backtab, Qt.Key_Backspace,
+                                                               Qt.Key_Return, Qt.Key_Enter)
+        return bool(t) and (t[0].isdigit() or t[0] in ".-(") or ev.key() == Qt.Key_Tab
+
+    def typed_value(self, i, kind="length"):
+        """Evaluated typed value for field i, or None."""
+        txt = self.typed.get(i, "").strip()
+        if not txt:
+            return None
+        try:
+            return self.s.doc.params.eval_expr(txt, kind)
+        except Exception:
+            return None
+
+    def handle_typing(self, vp, ev) -> bool:
+        flds = self.fields()
+        if not flds:
+            return False
+        k = ev.key()
+        if k in (Qt.Key_Tab, Qt.Key_Backtab) and not self.typing():
+            self.entry_active = True  # first Tab opens the value entry (allows expressions)
+        elif k in (Qt.Key_Tab, Qt.Key_Backtab):
+            self.active_field = (self.active_field + (1 if k == Qt.Key_Tab else -1)) % len(flds)
+        elif k == Qt.Key_Backspace:
+            self.typed[self.active_field] = self.typed.get(self.active_field, "")[:-1]
+        elif k in (Qt.Key_Return, Qt.Key_Enter):
+            if self.typing():
+                bad = [flds[i][0] for i in self.typed if self.typed[i].strip()
+                       and self.typed_value(i, flds[i][1]) is None]
+                if bad:
+                    self.s.message(f"Invalid value for {', '.join(bad)}")
+                    return True
+                self.commit_typed(vp)
+                self.typed, self.active_field, self.entry_active = {}, 0, False
+            return True
+        elif k == Qt.Key_Escape and self.typing():
+            self.typed, self.active_field, self.entry_active = {}, 0, False
+        elif ev.text() and ev.text().isprintable():
+            self.entry_active = True
+            self.typed[self.active_field] = self.typed.get(self.active_field, "") + ev.text()
+        else:
+            return False
+        self.refresh_preview(vp)
+        return True
+
+    def commit_typed(self, vp):
+        pass
+
+    def refresh_preview(self, vp):
+        pass
+
+    def paint(self, p, vp):
+        """Snap glyphs, inference guides and typed-value boxes."""
+        sn = self.cur
+        if sn is not None:
+            sc = vp.screen_of(self.fr.to_world(sn.uv))
+            col = QColor(10, 100, 214)
+            p.setPen(QPen(col, 1.6))
+            p.setBrush(Qt.NoBrush)
+            x, y = sc
+            if sn.kind == "point":
+                p.drawRect(QRectF(x - 6, y - 6, 12, 12))
+            elif sn.kind == "mid":
+                p.drawPolygon(QPolygonF([QPointF(x, y - 8), QPointF(x - 7, y + 5), QPointF(x + 7, y + 5)]))
+            elif sn.kind == "curve":
+                p.drawLine(QPointF(x - 6, y - 6), QPointF(x + 6, y + 6))
+                p.drawLine(QPointF(x - 6, y + 6), QPointF(x + 6, y - 6))
+            if sn.hv is not None and self.anchor_uv is not None:
+                a = vp.screen_of(self.fr.to_world(self.anchor_uv))
+                p.setPen(QPen(QColor(230, 120, 20), 1, Qt.DashLine))
+                d = sc - a
+                n = np.linalg.norm(d)
+                if n > 1e-6:
+                    p.drawLine(QPointF(*(a - d / n * 2000)), QPointF(*(a + d / n * 2000)))
+                p.setPen(QColor(230, 120, 20))
+                p.drawText(QPointF(x + 10, y - 10), "H" if sn.hv[0] == "h" else "V")
+        flds = self.fields()
+        if flds and sn is not None:
+            self._paint_fields(p, vp, flds, vp.screen_of(self.fr.to_world(sn.uv)))
+
+    def _paint_fields(self, p, vp, flds, at):
+        f = QFont(vp.font())
+        f.setPointSizeF(9)
+        p.setFont(f)
+        fm = QFontMetrics(f)
+        y = at[1] + 18
+        for i, (label, kind) in enumerate(flds):
+            txt = self.typed.get(i, "")
+            shown = txt if txt else self.current_value_text(i)
+            active = i == self.active_field and (self.typing() or True)
+            box = f"{label}: {shown}{'|' if active and self.typing() else ''}"
+            w = fm.horizontalAdvance(box) + 12
+            r = QRectF(at[0] + 14, y, w, fm.height() + 4)
+            p.setPen(QPen(QColor(10, 100, 214) if active else QColor(150, 155, 165), 1))
+            p.setBrush(QColor(255, 255, 255, 235) if THEME.light else QColor(40, 42, 48, 235))
+            p.drawRoundedRect(r, 3, 3)
+            p.setPen(QColor(20, 24, 30) if txt else QColor(110, 115, 125))
+            p.drawText(r, Qt.AlignCenter, box)
+            y += fm.height() + 7
+        if not self.typing():
+            p.setPen(QColor(120, 125, 135))
+            p.drawText(QPointF(at[0] + 14, y + 10), "Type a value (Tab for expressions) · Enter")
+
+    def current_value_text(self, i) -> str:
+        return ""
 
     # helpers -------------------------------------------------------------
     @property
@@ -62,6 +185,17 @@ class SketchTool:
                 best = (d, p.id)
         if best:
             return Snap(self.sk.xy(best[1]), "point", best[1])
+        # line midpoints
+        bm = None
+        for e in self.sk.curves():
+            if e.kind != "line" or e.id in exclude or set(e.pts) & set(exclude):
+                continue
+            mid = (np.array(self.sk.xy(e.pts[0])) + np.array(self.sk.xy(e.pts[1]))) / 2
+            d = math.dist(uv, mid)
+            if d < tol and (bm is None or d < bm[0]):
+                bm = (d, e.id, mid)
+        if bm:
+            return Snap(bm[2], "mid", bm[1])
         # curve snap
         bc = None
         for e in self.sk.curves():
@@ -93,6 +227,10 @@ class SketchTool:
         try:
             if snap.kind == "point" and snap.ref != pid:
                 self.sk.add_constraint("coincident", [pid, snap.ref])
+            elif snap.kind == "mid":
+                e = self.sk.entities.get(snap.ref)
+                if e is not None and pid not in e.pts:
+                    self.sk.add_constraint("midpoint", [pid, snap.ref])
             elif snap.kind == "curve":
                 e = self.sk.entities.get(snap.ref)
                 if e is not None and e.kind != "spline" and pid not in e.pts:
@@ -115,16 +253,21 @@ class SketchTool:
 
     def snap_marker(self, vp, snap):
         vp.tool_points.clear()
-        if snap is not None and snap.kind in ("point", "curve"):
+        self.cur = snap
+        if snap is not None and snap.kind in ("point", "curve", "mid"):
             vp.tool_points.add_points(self.fr.to_world(snap.uv), (*THEME.hover, 1.0))
 
     def finish(self, vp):
         """Called when the tool is deactivated."""
+        self.typed = {}
+        self.entry_active = False
         vp.tool_lines.clear()
         vp.tool_points.clear()
         vp.labels = []
 
     def key(self, vp, ev):
+        if self.wants_key(ev) and self.handle_typing(vp, ev):
+            return True
         if ev.key() == Qt.Key_Escape:
             if self.cancel_step(vp):
                 return True
@@ -217,30 +360,102 @@ class LineTool(SketchTool):
             return None
         return self.prev_end if self.prev_end is not None else np.array(self.start.uv)
 
+    def fields(self):
+        return [("Length", "length"), ("Angle", "angle")] if self.start is not None else []
+
+    def _a(self):
+        return np.array(self.sk.xy(self.prev_end) if self.prev_end is not None else self.start.uv)
+
+    def current_value_text(self, i):
+        if self.cur is None or self.start is None:
+            return ""
+        d = self.cur.uv - self._a()
+        return format_length(float(np.linalg.norm(d))) if i == 0 else format_angle(math.atan2(d[1], d[0]) % (2 * math.pi))
+
+    def _typed_end(self, cursor_uv):
+        a = self._a()
+        d = np.asarray(cursor_uv) - a
+        L = self.typed_value(0, "length")
+        ang = self.typed_value(1, "angle")
+        if ang is not None:
+            u = np.array([math.cos(ang), math.sin(ang)])
+        else:
+            n = np.linalg.norm(d)
+            u = d / n if n > 1e-12 else np.array([1.0, 0.0])
+        if L is None:
+            L = float(np.dot(d, u)) if ang is not None else float(np.linalg.norm(d))
+        return a + u * L
+
+    def refresh_preview(self, vp):
+        if self.start is None or self.cur is None:
+            return
+        a = self._a()
+        end = self._typed_end(self._cursor_uv) if self.typing() else self.cur.uv
+        self.preview(vp, [[a, end]])
+        vp.labels = []
+
     def move(self, vp, x, y, ev):
         sn = self.snap(vp, x, y, infer_from=self._anchor(),
                        exclude=(self.prev_end,) if self.prev_end is not None else ())
         if sn is None:
             return True
+        self.cur = sn
+        self._cursor_uv = sn.uv
         if self.start is not None:
-            a = self.sk.xy(self.prev_end) if self.prev_end is not None else self.start.uv
+            self.anchor_uv = self._a()
+            if self.typing():
+                self.refresh_preview(vp)
+                return True
+            a = self._a()
             self.preview(vp, [[a, sn.uv]], [sn.uv] if sn.kind != "free" else [])
-            self.length_label(vp, a, sn.uv)
+            vp.labels = []  # the value boxes show length & angle
         else:
             self.snap_marker(vp, sn)
         return True
+
+    def commit_typed(self, vp):
+        if self.start is None:
+            return
+        end = self._typed_end(getattr(self, "_cursor_uv", self._a() + [1, 0]))
+        L_expr = self.typed.get(0, "").strip()
+        lid = self._place(vp, Snap(end), commit=False)
+        if lid is not None and L_expr:
+            mid = (np.array(self.sk.xy(self.sk.entities[lid].pts[0])) + end) / 2
+            self.s.add_dimension("distance", [lid], self.typed_value(0, "length"), mid, expr=L_expr, commit=False)
+        ang = self.typed_value(1, "angle")
+        if lid is not None and ang is not None:
+            deg = math.degrees(ang) % 180
+            kind = "horizontal" if abs(deg) < 1e-9 or abs(deg - 180) < 1e-9 else "vertical" if abs(deg - 90) < 1e-9 else None
+            if kind:
+                try:
+                    self.sk.add_constraint(kind, [lid])
+                except SketchError:
+                    pass
+        self.sk.solve()
+        self.commit("Line")
 
     def press(self, vp, x, y, ev):
         sn = self.snap(vp, x, y, infer_from=self._anchor(),
                        exclude=(self.prev_end,) if self.prev_end is not None else ())
         if sn is None:
             return True
+        if self.typing() and self.start is not None:
+            self._cursor_uv = sn.uv
+            self.commit_typed(vp)
+            self.typed = {}
+            self.entry_active = False
+            return True
+        self._place(vp, sn)
+        return True
+
+    def _place(self, vp, sn, commit=True):
+        """Add the next chain point; returns the new line id (or None)."""
         if self.start is None:
             self.start = sn
-            return True
+            return None
         a = self.sk.xy(self.prev_end) if self.prev_end is not None else self.start.uv
         if math.dist(a, sn.uv) < 1e-6:
-            return True
+            return None
         lid = self.sk.add_line(a, sn.uv)
         p0, p1 = self.sk.entities[lid].pts
         if self.prev_end is not None:
@@ -255,18 +470,22 @@ class LineTool(SketchTool):
                 self.sk.add_constraint("horizontal" if sn.hv[0] == "h" else "vertical", [lid])
             except SketchError:
                 pass
-        self.sk.solve()
-        self.commit("Line")
+        if commit:
+            self.sk.solve()
+            self.commit("Line")
         if closed or sn.kind == "point":
             # closed a loop or joined existing geometry: start a fresh chain
             self.reset(vp)
-            return True
+            return lid
         self.prev_end = p1
         self.start = sn
-        return True
+        return lid
 
     def reset(self, vp):
         self.reset_state()
+        self.typed = {}
+        self.entry_active = False
+        self.anchor_uv = None
         vp.tool_lines.clear()
         vp.labels = []
         self.s.live_update()
@@ -296,32 +515,66 @@ class TwoClickTool(SketchTool):
         anchor = np.array(self.pts[0].uv) if self.pts else None
         sn = self.snap(vp, x, y, infer_from=anchor)
         self.cur = sn
+        self.anchor_uv = anchor
         if sn is None:
             return True
+        self._cursor_uv = sn.uv
         if self.pts:
-            self.draw_preview(vp, [p.uv for p in self.pts] + [sn.uv])
+            self.refresh_preview(vp)
         else:
             self.snap_marker(vp, sn)
         return True
+
+    def typed_point(self, cursor_uv):
+        """Cursor position adjusted by typed values (override per tool)."""
+        return np.asarray(cursor_uv)
+
+    def refresh_preview(self, vp):
+        if not self.pts or self.cur is None:
+            return
+        end = self.typed_point(self._cursor_uv) if self.typing() else self.cur.uv
+        self.draw_preview(vp, [p.uv for p in self.pts] + [end])
+
+    def add_typed_dims(self, created):
+        """Create driving dimensions from typed expressions (override)."""
+
+    def commit_typed(self, vp):
+        if not self.pts or len(self.pts) + 1 != self.clicks_needed:
+            return
+        sn = Snap(self.typed_point(getattr(self, "_cursor_uv", self.pts[-1].uv)))
+        self._finish_click(vp, sn, typed=True)
 
     def press(self, vp, x, y, ev):
         anchor = np.array(self.pts[0].uv) if self.pts else None
         sn = self.snap(vp, x, y, infer_from=anchor)
         if sn is None:
             return True
+        if self.typing() and self.pts:
+            self._cursor_uv = sn.uv
+            self.commit_typed(vp)
+            self.typed = {}
+            self.entry_active = False
+            return True
+        self._finish_click(vp, sn)
+        return True
+
+    def _finish_click(self, vp, sn, typed=False):
         self.pts.append(sn)
         if len(self.pts) >= self.clicks_needed:
             try:
-                self.create(self.pts)
+                created = self.create(self.pts)
+                if typed:
+                    self.add_typed_dims(created)
                 self.sk.solve()
                 self.commit(self.label)
             except (SketchError, ValueError, ZeroDivisionError):
                 pass
             self.pts = []
+            self.typed = {}
+            self.entry_active = False
             vp.tool_lines.clear()
             vp.labels = []
             self.s.live_update()
-        return True
 
     def cancel_step(self, vp):
         if self.pts:
@@ -348,6 +601,34 @@ class RectTool(TwoClickTool):
     hint = "Click two opposite corners."
     center = False
 
+    def fields(self):
+        return [("Width", "length"), ("Height", "length")] if self.pts else []
+
+    def current_value_text(self, i):
+        if not self.pts or self.cur is None:
+            return ""
+        c = self.corners(self.pts[0].uv, self.cur.uv)
+        return format_length(abs(c[2][i] - c[0][i]))
+
+    def typed_point(self, cursor_uv):
+        a = np.asarray(self.pts[0].uv)
+        p = np.asarray(cursor_uv, float).copy()
+        for i in (0, 1):
+            v = self.typed_value(i)
+            if v is not None:
+                sign = 1.0 if p[i] >= a[i] else -1.0
+                p[i] = a[i] + sign * (v / 2 if self.center else v)
+        return p
+
+    def add_typed_dims(self, lines):
+        for i, li in ((0, lines[0]), (1, lines[1])):
+            expr = self.typed.get(i, "").strip()
+            v = self.typed_value(i)
+            if expr and v is not None:
+                e = self.sk.entities[li]
+                mid = (np.array(self.sk.xy(e.pts[0])) + np.array(self.sk.xy(e.pts[1]))) / 2
+                self.s.add_dimension("distance", [li], v, mid, expr=expr, commit=False)
+
     def corners(self, a, b):
         if self.center:
             a = np.asarray(a)
@@ -358,9 +639,7 @@ class RectTool(TwoClickTool):
     def draw_preview(self, vp, uvs):
         c = self.corners(uvs[0], uvs[1])
         self.preview(vp, [c + [c[0]]])
-        w, h = abs(c[2][0] - c[0][0]), abs(c[2][1] - c[0][1])
-        vp.labels = [(self.fr.to_world((c[0] + c[1]) / 2), format_length(w), THEME.sk_free),
-                     (self.fr.to_world((c[1] + c[2]) / 2), format_length(h), THEME.sk_free)]
+        vp.labels = []  # width/height are shown in the value boxes
 
     def create(self, snaps):
         c = self.corners(snaps[0].uv, snaps[1].uv)
@@ -385,6 +664,7 @@ class RectTool(TwoClickTool):
         else:
             self.attach(E[lines[0]].pts[0], snaps[0])
             self.attach(E[lines[2]].pts[0], snaps[1])
+        return lines
 
 
 class CenterRectTool(RectTool):
@@ -396,14 +676,39 @@ class CenterRectTool(RectTool):
 class CircleTool(TwoClickTool):
     name = "circle"
     label = "Circle"
-    hint = "Click the center, then the diameter."
+    hint = "Click the center, then the diameter (or type it)."
+
+    def fields(self):
+        return [("Diameter", "length")] if self.pts else []
+
+    def current_value_text(self, i):
+        if not self.pts or self.cur is None:
+            return ""
+        return format_length(2 * math.dist(self.pts[0].uv, self.cur.uv))
+
+    def typed_point(self, cursor_uv):
+        c = np.asarray(self.pts[0].uv)
+        D = self.typed_value(0)
+        if D is None:
+            return np.asarray(cursor_uv)
+        d = np.asarray(cursor_uv) - c
+        n = np.linalg.norm(d)
+        u = d / n if n > 1e-12 else np.array([1.0, 0])
+        return c + u * D / 2
+
+    def add_typed_dims(self, cid):
+        expr = self.typed.get(0, "").strip()
+        v = self.typed_value(0)
+        if expr and v is not None:
+            c = np.array(self.sk.xy(self.sk.entities[cid].pts[0]))
+            self.s.add_dimension("diameter", [cid], v, c + np.array([v / 2, v / 2]) * 0.8, expr=expr, commit=False)
 
     def draw_preview(self, vp, uvs):
         c, p = uvs
         r = math.dist(c, p)
         t = np.linspace(0, 2 * math.pi, 96)
         self.preview(vp, [np.column_stack([c[0] + r * np.cos(t), c[1] + r * np.sin(t)])])
-        vp.labels = [(self.fr.to_world(p), "⌀" + format_length(2 * r), THEME.sk_free)]
+        vp.labels = []
 
     def create(self, snaps):
         c, p = snaps[0].uv, snaps[1].uv
@@ -412,13 +717,12 @@ class CircleTool(TwoClickTool):
             raise ValueError
         cid = self.sk.add_circle(c, r)
         self.attach(self.sk.entities[cid].pts[0], snaps[0])
-        if snaps[1].kind in ("point", "curve"):
-            # circle through the snapped point
-            if snaps[1].kind == "point":
-                try:
-                    self.sk.add_constraint("coincident", [snaps[1].ref, cid])
-                except SketchError:
-                    pass
+        if snaps[1].kind == "point":  # circle through the snapped point
+            try:
+                self.sk.add_constraint("coincident", [snaps[1].ref, cid])
+            except SketchError:
+                pass
+        return cid
 
 
 class Arc3Tool(TwoClickTool):

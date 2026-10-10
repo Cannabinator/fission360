@@ -70,12 +70,14 @@ FEATURE_TYPES: dict[str, dict] = {
         F("tip_angle", "Drill Point Angle", "angle", "118 deg"),
     ]},
     "fillet": {"label": "Fillet", "icon": "fillet", "key": "F", "fields": [
-        F("edges", "Edges", "edges"),
+        F("edges", "Edges/Faces", "edges", tip="Pick edges, or a face to round all its edges"),
         F("radius", "Radius", "length", "2 mm"),
+        F("tangent_chain", "Tangent Chain", "bool", True),
     ]},
     "chamfer": {"label": "Chamfer", "icon": "chamfer", "fields": [
-        F("edges", "Edges", "edges"),
+        F("edges", "Edges/Faces", "edges", tip="Pick edges, or a face to chamfer all its edges"),
         F("chamfer_type", "Chamfer Type", "choice", "equal", ["equal", "two_distances"]),
+        F("tangent_chain", "Tangent Chain", "bool", True),
         F("distance", "Distance", "length", "1 mm"),
         F("distance2", "Distance 2", "length", "1 mm", show=lambda d: d.get("chamfer_type") == "two_distances"),
     ]},
@@ -335,7 +337,29 @@ def _exec_extrude(doc, f, state):
             else:
                 tools.append(K.prism(base, n * (b - a)))
     tool = tools[0] if len(tools) == 1 else _fuse_all(tools)
-    apply_operation(doc, f, state, tool, f.data.get("operation", "new"), f.data.get("targets"))
+    op = f.data.get("operation", "new")
+    if op == "auto":
+        op = auto_operation(doc, state, tool)
+        f.resolved_operation = op
+    apply_operation(doc, f, state, tool, op, f.data.get("targets"))
+
+
+def auto_operation(doc, state, tool) -> str:
+    """Fusion-style automatic operation: extruding *into* material cuts,
+    extruding from a body face *out of* material joins, otherwise new body."""
+    touching = False
+    tool_vol = K.mass_properties(tool)["volume_mm3"] or 1.0
+    for b in state.bodies.values():
+        if not doc.body_visible(b.id) or not _intersects(b.shape, tool):
+            continue
+        touching = True
+        try:
+            v = K.mass_properties(K.common(b.shape, tool))["volume_mm3"]
+        except K.KernelError:
+            v = 0.0
+        if v > 1e-6 * tool_vol:
+            return "cut"
+    return "join" if touching else "new"
 
 
 def _fuse_all(shapes):
@@ -408,11 +432,23 @@ def _exec_hole(doc, f, state):
     apply_operation(doc, f, state, _fuse_all(tools), "cut")
 
 
-def _edges(state, refs):
+def _edges(state, refs, chain=False):
+    """Resolve edge (or face -> all its edges) references, grouped by body."""
     by_body: dict[str, list] = {}
     for ref in refs:
-        bid, e = R.resolve_edge(state, ref)
-        by_body.setdefault(bid, []).append(e)
+        if "face" in ref:
+            bid, f = R.resolve_face(state, ref["face"])
+            es = K.edges(f)
+        else:
+            bid, e = R.resolve_edge(state, ref)
+            es = [e]
+        lst = by_body.setdefault(bid, [])
+        for e in es:
+            if not any(e.IsSame(x) for x in lst):
+                lst.append(e)
+    if chain:
+        for bid in by_body:
+            by_body[bid] = K.tangent_chain(state.bodies[bid].shape, by_body[bid])
     return by_body
 
 
@@ -421,7 +457,9 @@ def _exec_fillet(doc, f, state):
     if not refs:
         raise K.KernelError("select edges")
     r = doc.val(f, "radius")
-    for bid, es in _edges(state, refs).items():
+    if r <= 0:
+        raise K.KernelError("radius must be positive")
+    for bid, es in _edges(state, refs, f.data.get("tangent_chain", True)).items():
         state.set_shape(bid, K.fillet(state.bodies[bid].shape, es, r))
 
 
@@ -431,7 +469,7 @@ def _exec_chamfer(doc, f, state):
         raise K.KernelError("select edges")
     d1 = doc.val(f, "distance")
     d2 = doc.val(f, "distance2") if f.data.get("chamfer_type") == "two_distances" else None
-    for bid, es in _edges(state, refs).items():
+    for bid, es in _edges(state, refs, f.data.get("tangent_chain", True)).items():
         state.set_shape(bid, K.chamfer(state.bodies[bid].shape, es, d1, d2))
 
 

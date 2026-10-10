@@ -273,11 +273,16 @@ class SketchSession:
         self.changed("Delete sketch geometry")
 
     # ------------------------------------------------------------------ dimensions
-    def add_dimension(self, kind, refs, value, label_uv):
+    def add_dimension(self, kind, refs, value, label_uv, expr=None, commit=True):
+        """Create a driving dimension.  ``expr`` keeps a typed expression
+        (e.g. ``width/2``) instead of the measured number."""
         sk = self.sketch
         pkind = DIMENSION_KINDS[kind]
         text = format_angle(value) if pkind == "angle" else format_length(value)
-        pname = self.doc.params.add(text, pkind, owner=self.fid)
+        try:
+            pname = self.doc.params.add(expr if expr else text, pkind, owner=self.fid)
+        except ExpressionError:
+            pname = self.doc.params.add(text, pkind, owner=self.fid)
         c_id = None
         try:
             c_id = sk.add_constraint(kind, refs, param=pname)
@@ -299,7 +304,8 @@ class SketchSession:
                 c.data["offset"] = [0.0, 0.0]
         except Exception:
             pass
-        self.changed("Dimension")
+        if commit:
+            self.changed("Dimension")
         return c_id
 
     def _dim_mid(self, c):

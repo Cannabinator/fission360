@@ -25,7 +25,7 @@ from .viewport import Pick
 
 SELECT_KINDS = {
     "profiles": {"profile", "face"},
-    "edges": {"edge"},
+    "edges": {"edge", "face"},
     "faces": {"face"},
     "bodies": {"face"},
     "body": {"face"},
@@ -35,6 +35,62 @@ SELECT_KINDS = {
     "axis": {"curve", "edge", "face"},
 }
 MULTI = {"profiles", "edges", "faces", "bodies", "points", "path"}
+
+
+_NUM_RE = __import__("re").compile(r"^\s*(-?\d+(?:\.\d*)?|-?\.\d+)\s*([a-z]*)\s*$")
+
+
+class ExprEdit(QLineEdit):
+    """Value field: expressions, Up/Down/wheel stepping, evaluated tooltip.
+
+    Up/Down step by 1 (Shift: 0.1, Ctrl: 10) when the field holds a plain
+    number with an optional unit, like Fusion's value boxes.
+    """
+    stepped = Signal()
+
+    def __init__(self, text, kind, evaluate):
+        super().__init__(text)
+        self.kind = kind
+        self.evaluate = evaluate
+        self.textChanged.connect(self._tip)
+        self._tip()
+
+    def _tip(self):
+        try:
+            v = self.evaluate(self.text(), self.kind)
+            from ..core.expressions import format_angle, format_length
+            txt = format_length(v) if self.kind == "length" else format_angle(v) if self.kind == "angle" else f"{v:g}"
+            self.setToolTip(f"= {txt}<br><i>Up/Down or wheel to step (Shift ×0.1, Ctrl ×10)</i>")
+        except Exception as exc:
+            self.setToolTip(str(exc))
+
+    def step(self, n, mods):
+        m = _NUM_RE.match(self.text())
+        if not m:
+            return
+        k = 0.1 if mods & Qt.ShiftModifier else 10.0 if mods & Qt.ControlModifier else 1.0
+        if self.kind == "scalar" and k < 1:
+            k = 1.0
+        v = float(m.group(1)) + n * k
+        if self.kind == "scalar":
+            v = max(1.0, v) if float(m.group(1)) >= 1 else v
+        txt = f"{v:.4f}".rstrip("0").rstrip(".")
+        unit = m.group(2) or {"length": "mm", "angle": "deg", "scalar": ""}[self.kind]
+        self.setText(f"{txt} {unit}".strip())
+        self.stepped.emit()
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Up, Qt.Key_Down):
+            self.step(1 if ev.key() == Qt.Key_Up else -1, ev.modifiers())
+            return
+        super().keyPressEvent(ev)
+
+    def wheelEvent(self, ev):
+        if self.hasFocus():
+            self.step(1 if ev.angleDelta().y() > 0 else -1, ev.modifiers())
+            ev.accept()
+            return
+        super().wheelEvent(ev)
 
 
 class FeaturePanel(QFrame):
@@ -67,6 +123,8 @@ class FeaturePanel(QFrame):
                     feature.params[fs["key"]] = self.doc.params.add(fs["default"], fs["kind"], owner=feature.id)
             self.base_state = self.doc.state_before(feature.id)
         self.data = copy.deepcopy(self.f.data)
+        # Fusion picks Join/Cut/New automatically until the user chooses one
+        self.auto_op = ftype == "extrude" and not self.editing
         self.active_field = None
         self.widgets = {}
         self.sel_buttons = {}
@@ -131,9 +189,10 @@ class FeaturePanel(QFrame):
     def _make_widget(self, fs):
         k, key = fs["kind"], fs["key"]
         if k in NUMERIC_KINDS:
-            e = QLineEdit(self.doc.params.params[self.f.params[key]].expr)
+            e = ExprEdit(self.doc.params.params[self.f.params[key]].expr, k, self.doc.params.eval_expr)
             e.textChanged.connect(lambda t, key=key, e=e: self._on_expr(key, t, e))
             e.returnPressed.connect(self.accept)
+            e.stepped.connect(self.update_preview)
             self.widgets[key] = e
             return e
         if k == "choice":
@@ -141,7 +200,7 @@ class FeaturePanel(QFrame):
             for o in fs["options"]:
                 c.addItem(OP_LABELS.get(o, DIRECTION_LABELS.get(o, o)), o)
             c.setCurrentIndex(max(0, fs["options"].index(self.data.get(key, fs["default"]))))
-            c.currentIndexChanged.connect(lambda i, key=key, c=c: self._set(key, c.currentData()))
+            c.currentIndexChanged.connect(lambda i, key=key, c=c: self._on_choice(key, c.currentData()))
             self.widgets[key] = c
             return c
         if k == "bool":
@@ -209,6 +268,8 @@ class FeaturePanel(QFrame):
                 "points": "point", "path": "curve"}.get(fs["kind"], "item")
         if fs["kind"] == "path" and v:
             n = len(v.get("entities", []))
+        if fs["kind"] == "edges" and v and any("face" in r for r in v):
+            noun = "item"  # mix of faces (all their edges) and edges
         b.setText(f"  {n} {noun}{'s' if n != 1 else ''} selected" if n else f"  Select {noun}s")
 
     def _field(self, key):
@@ -242,6 +303,11 @@ class FeaturePanel(QFrame):
         edit.style().unpolish(edit)
         edit.style().polish(edit)
         self.schedule()
+
+    def _on_choice(self, key, value):
+        if key == "operation":
+            self.auto_op = False
+        self._set(key, value)
 
     def _set(self, key, value):
         self.data[key] = value
@@ -308,6 +374,8 @@ class FeaturePanel(QFrame):
                         refs.append({"face": R.face_ref(p.key, face)})
                 elif k == "edges" and p.kind == "edge":
                     refs.append(R.edge_ref(p.key, K.edges(st.bodies[p.key].shape)[p.index]))
+                elif k == "edges" and p.kind == "face":
+                    refs.append({"face": R.face_ref(p.key, K.faces(st.bodies[p.key].shape)[p.index])})
                 elif k == "faces" and p.kind == "face":
                     refs.append(R.face_ref(p.key, K.faces(st.bodies[p.key].shape)[p.index]))
                 elif k in ("bodies", "body") and p.kind in ("face", "body"):
@@ -391,8 +459,12 @@ class FeaturePanel(QFrame):
                             out.append(Pick("profile", ref["sketch"], _index_of(sk.profiles, face)))
             elif k == "edges":
                 for ref in v or []:
-                    bid, e = R.resolve_edge(st, ref)
-                    out.append(Pick("edge", bid, _index_of(K.edges(st.bodies[bid].shape), e)))
+                    if "face" in ref:
+                        bid, f = R.resolve_face(st, ref["face"])
+                        out.append(Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), f)))
+                    else:
+                        bid, e = R.resolve_edge(st, ref)
+                        out.append(Pick("edge", bid, _index_of(K.edges(st.bodies[bid].shape), e)))
             elif k == "faces":
                 for ref in v or []:
                     bid, f = R.resolve_face(st, ref)
@@ -414,8 +486,10 @@ class FeaturePanel(QFrame):
         self._timer.start()
 
     def _temp_feature(self):
-        f = Feature(self.f.id, self.ftype, self.f.name, copy.deepcopy(self.data), dict(self.f.params))
-        return f
+        data = copy.deepcopy(self.data)
+        if self.auto_op:
+            data["operation"] = "auto"
+        return Feature(self.f.id, self.ftype, self.f.name, data, dict(self.f.params))
 
     def update_preview(self):
         f = self._temp_feature()
@@ -425,6 +499,16 @@ class FeaturePanel(QFrame):
             self.doc.params._cache.clear()
             execute(self.doc, f, st)
             self.ok.setEnabled(True)
+            resolved = getattr(f, "resolved_operation", None)
+            if self.auto_op and resolved:
+                self.data["operation"] = resolved
+                c = self.widgets.get("operation")
+                if c is not None:
+                    c.blockSignals(True)
+                    c.setCurrentIndex(max(0, c.findData(resolved)))
+                    c.setItemText(c.currentIndex(), OP_LABELS[resolved] + "  (auto)")
+                    c.blockSignals(False)
+                self._refresh_visibility()
             if f.warning:
                 self.msg.setText(f.warning)
         except Exception as exc:
@@ -432,6 +516,7 @@ class FeaturePanel(QFrame):
             self.vp.set_previews([])
             self.vp.hidden_bodies = set()
             self.ok.setEnabled(not self._missing_required())
+            self._update_manipulators()
             return
         previews, hidden = [], set()
         for bid, b in st.bodies.items():
@@ -447,6 +532,83 @@ class FeaturePanel(QFrame):
             self._field(self.active_field)["kind"] in ("edges", "faces")
         self.vp.hidden_bodies = set() if selecting_geometry else hidden
         self.vp.set_previews(previews)
+        self._update_manipulators()
+
+    # ------------------------------------------------------------------ in-canvas handles
+    def _set_value(self, key, value_mm, final, fmt="length"):
+        from ..core.expressions import format_angle, format_length
+        txt = format_length(value_mm, digits=3) if fmt == "length" else format_angle(value_mm)
+        e = self.widgets[key]
+        e.blockSignals(True)
+        e.setText(txt)
+        e.blockSignals(False)
+        self._on_expr(key, txt, e)
+        if final:
+            self._timer.stop()
+            self.update_preview()
+
+    def _manip_specs(self):
+        """(key, origin, direction, value, scale) tuples for the current inputs."""
+        st = self.base_state
+        d, out = self.data, []
+        val = lambda k: self.doc.params.value(self.f.params[k])  # noqa: E731
+        try:
+            if self.ftype == "extrude" and d.get("profiles"):
+                from ..core.features import _profile_normal
+                ref = d["profiles"][0]
+                face, _ = R.resolve_profile(st, ref)
+                c = K.centroid(face)
+                n = _profile_normal(st, ref, face)
+                if d.get("direction") == "symmetric":
+                    out.append(("distance", c, n, val("distance") / 2, 2.0))
+                else:
+                    out.append(("distance", c, n, val("distance"), 1.0))
+                    if d.get("direction") == "two_sides":
+                        out.append(("distance2", c, -n, val("distance2"), 1.0))
+            elif self.ftype == "plane_offset":
+                fr = R.resolve_plane(st, d.get("plane", "XY"))
+                out.append(("distance", fr.origin, fr.normal, val("distance"), 1.0))
+            elif self.ftype in ("fillet", "chamfer") and d.get("edges"):
+                ref = d["edges"][0]
+                if "face" in ref:
+                    bid, f = R.resolve_face(st, ref["face"])
+                    e = K.edges(f)[0]
+                else:
+                    bid, e = R.resolve_edge(st, ref)
+                info = K.edge_info(e)
+                mid = np.array(info["mid"])
+                body_c = K.centroid(st.bodies[bid].shape)
+                t = np.array(info["tangent"])
+                v = body_c - mid
+                v -= np.dot(v, t) * t
+                if np.linalg.norm(v) > 1e-9:
+                    v = v / np.linalg.norm(v)
+                    key = "radius" if self.ftype == "fillet" else "distance"
+                    out.append((key, mid, v, val(key), 1.0))
+            elif self.ftype == "shell" and d.get("faces"):
+                bid, f = R.resolve_face(st, d["faces"][0])
+                info = K.face_info(f)
+                out.append(("thickness", np.array(info["center"]), -np.array(info["normal"]),
+                            val("thickness"), 1.0))
+        except Exception:
+            return []
+        return out
+
+    def _update_manipulators(self):
+        from ..core.expressions import format_length
+        from .viewport import Manipulator
+        manips = []
+        for key, o, n, v, scale in self._manip_specs():
+            def cb(t, final, key=key, scale=scale):
+                self._set_value(key, t * scale, final)
+            manips.append(Manipulator(np.asarray(o, float), np.asarray(n, float), float(v), cb,
+                                      format_length(v * scale), "arrow",
+                                      0.0 if key in ("radius", "thickness") or self.ftype == "chamfer" else None))
+        if self.vp._manip_drag is None:
+            self.vp.set_manipulators(manips)
+        else:  # keep the dragged handle, refresh its label
+            m = self.vp._manip_drag
+            m.label = format_length(m.value)
 
     def _missing_required(self):
         for fs in self.spec["fields"]:
@@ -466,6 +628,7 @@ class FeaturePanel(QFrame):
         self.vp.show_profiles_for = set()
         self.vp.show_points = False
         self.vp.set_previews([])
+        self.vp.set_manipulators([])
         self.vp.set_filter(None)
         self.vp.set_selection([])
         self.vp.invalidate()
@@ -474,6 +637,9 @@ class FeaturePanel(QFrame):
 
     def accept(self):
         doc = self.doc
+        if self._timer.isActive():  # make sure auto-operation etc. reflect the latest inputs
+            self._timer.stop()
+            self.update_preview()
         label = ("Edit " if self.editing else "") + self.spec["label"]
         try:
             if self.editing:

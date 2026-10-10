@@ -31,6 +31,8 @@ class Browser(QTreeWidget):
         self.customContextMenuRequested.connect(self._menu)
         self.itemClicked.connect(self._clicked)
         self.itemDoubleClicked.connect(self._double)
+        self.itemChanged.connect(self._renamed)
+        self.setEditTriggers(QTreeWidget.EditKeyPressed)
         self.setSelectionMode(QTreeWidget.ExtendedSelection)
         self._expanded = {"root", "bodies", "sketches"}
 
@@ -63,6 +65,7 @@ class Browser(QTreeWidget):
         bodies = folder(f"Bodies ({len(st.bodies)})", "bodies", "folder")
         for b in st.bodies.values():
             it = QTreeWidgetItem([doc.body_name(b.id)])
+            it.setFlags(it.flags() | Qt.ItemIsEditable)
             it.setIcon(0, icon("body"))
             it.setData(0, ROLE, ("body", b.id))
             self._eye(it, doc.body_visible(b.id))
@@ -72,6 +75,7 @@ class Browser(QTreeWidget):
             sk_folder = folder(f"Sketches ({len(sketches)})", "sketches")
             for f, so in sketches:
                 it = QTreeWidgetItem([f.name])
+                it.setFlags(it.flags() | Qt.ItemIsEditable)
                 it.setIcon(0, icon("sketch"))
                 it.setData(0, ROLE, ("sketch", f.id))
                 self._eye(it, doc.body_props.get(f.id, {}).get("visible", True))
@@ -119,13 +123,23 @@ class Browser(QTreeWidget):
         if kind == "body":
             self.request.emit("select_body", key)
 
+    def _renamed(self, it, col):
+        kind, key = it.data(0, ROLE)
+        name = it.text(0).strip()
+        if not name or col != 0:
+            return
+        if kind == "body":
+            self.request.emit("rename_body_to", (key, name))
+        elif kind in ("sketch", "construct"):
+            self.request.emit("rename_feature_to", (key, name))
+
     def _double(self, it, col):
         kind, key = it.data(0, ROLE)
         if kind == "sketch":
             self.request.emit("edit_sketch", key)
         elif kind == "construct":
             self.request.emit("edit_feature", key)
-        elif kind in ("body",):
+        elif kind == "body":
             self.editItem(it, 0)
 
     def _menu(self, pos):
@@ -299,6 +313,7 @@ class _Strip(QWidget):
         i = self._index_at(x)
         if i != self.hover:
             self.hover = i
+            self.tl.request.emit("hover", self.doc.features[i].id if i >= 0 else None)
             if i >= 0:
                 f = self.doc.features[i]
                 tip = f.name + (f"\n⚠ {f.error}" if f.error else (f"\n{f.warning}" if f.warning else ""))
@@ -340,4 +355,5 @@ class _Strip(QWidget):
 
     def leaveEvent(self, ev):
         self.hover = -1
+        self.tl.request.emit("hover", None)
         self.update()

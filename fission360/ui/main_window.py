@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         self.viewport.context_requested.connect(self.marking_menu)
         self.viewport.double_clicked.connect(self.on_viewport_double)
         self.viewport.selection_changed.connect(self.on_selection)
+        self.viewport.hover_changed.connect(self.on_hover)
         self.attach_document(self.doc)
         self.ribbon.show_tab("SOLID")
         self.ribbon.set_tab_visible("SKETCH", False)
@@ -246,7 +247,11 @@ class MainWindow(QMainWindow):
             C("construction", "Construction", "construction", lambda: self.session and self.session.toggle_construction(), "X", "sketch",
               "Toggle selected curves between normal and construction geometry"),
             C("delete", "Delete", "remove", self.delete_selection, "Del", "any"),
-            C("fit", "Fit", "fit", lambda: self.viewport.fit_all(), "F6", "any"),
+            C("fit", "Fit", "fit", lambda: self.viewport.fit_selection(), "F6", "any",
+              "Fit the selection, or everything when nothing is selected"),
+            C("look_at", "Look At", "fit", self.look_at, "", "any", "Look straight at the selected face or plane"),
+            C("press_pull", "Press Pull", "extrude", lambda: self.feature_command("extrude"), "Q", "solid",
+              "Push/pull faces or profiles; joins or cuts automatically"),
             C("appearance", "Appearance", "appearance", self.appearance_selected, "A", "solid"),
             C("search", "Command Search", "search", self.command_search, "S", "any"),
         ]
@@ -355,7 +360,16 @@ class MainWindow(QMainWindow):
         look = QPushButton(icon("fit"), " Look At")
         look.clicked.connect(lambda: self.session and self.viewport.look_at_frame(self.session.frame))
         self.dof_label = QLabel("")
-        for w in (look, self.cb_grid, self.cb_snap, self.dof_label):
+        self.cb_dims = QCheckBox("Show dimensions")
+        self.cb_dims.setChecked(True)
+        self.cb_dims.toggled.connect(lambda on: (setattr(self.viewport, "show_dimensions", on), self.viewport.update()))
+        self.cb_cons = QCheckBox("Show constraints")
+        self.cb_cons.setChecked(True)
+        self.cb_cons.toggled.connect(lambda on: (setattr(self.viewport, "show_constraints", on), self.viewport.update()))
+        self.cb_prof = QCheckBox("Show profiles")
+        self.cb_prof.setChecked(True)
+        self.cb_prof.toggled.connect(lambda on: (setattr(self.viewport, "hide_profiles", not on), self.viewport.invalidate()))
+        for w in (look, self.cb_grid, self.cb_snap, self.cb_dims, self.cb_cons, self.cb_prof, self.dof_label):
             inner.addWidget(w)
         v.addLayout(inner)
         fin = QPushButton(icon("finish"), " Finish Sketch")
@@ -806,6 +820,19 @@ class MainWindow(QMainWindow):
         if p.kind in ("face", "edge", "vertex"):
             self.statusBar().showMessage(f"{p.kind.title()} of {self.doc.body_name(p.key)}", 3000)
 
+    def on_hover(self, p):
+        """Pre-selection feedback in the status bar (what a click would pick)."""
+        if p is None:
+            return
+        names = {"face": "Face", "edge": "Edge", "vertex": "Vertex", "profile": "Profile", "curve": "Sketch curve",
+                 "spoint": "Sketch point", "origin": "Sketch origin", "plane": "Plane"}
+        what = names.get(p.kind, p.kind)
+        if p.kind in ("face", "edge", "vertex") and p.key in self.doc.state.bodies:
+            what += f" of {self.doc.body_name(p.key)}"
+        elif p.kind in ("profile", "curve") and self.doc.feature(p.key):
+            what += f" of {self.doc.feature(p.key).name}"
+        self.statusBar().showMessage(what, 2000)
+
     def on_viewport_double(self, pick):
         if pick is None:
             return
@@ -873,9 +900,9 @@ class MainWindow(QMainWindow):
         else:
             rep = C.get(self.last_command) if self.last_command else None
             items = [(f"Repeat {rep.label}", rep.icon, lambda k=rep.key: self.run(k)) if rep else item("search"),
-                     item("extrude"), item("hole"), item("move"), item("delete"), item("fillet"),
+                     item("press_pull"), item("hole"), item("move"), item("delete"), item("fillet"),
                      item("create_sketch"), item("undo")]
-            over = [item(k) for k in ("redo", "chamfer", "shell", "measure", "section", "properties", "appearance",
+            over = [item(k) for k in ("redo", "look_at", "fit", "chamfer", "shell", "measure", "section", "properties", "appearance",
                                       "parameters")]
             sel_bodies = {p.key for p in self.viewport.selection if p.kind in ("face", "body")}
             if sel_bodies:
@@ -1022,8 +1049,54 @@ class MainWindow(QMainWindow):
             snap = doc.snapshot()
             doc.set_suppressed(payload, not f.suppressed)
             doc.push_undo("Suppress" if f.suppressed else "Unsuppress", snap)
+        elif action == "hover":
+            self.viewport.highlight_bodies = self.feature_bodies(payload) if payload else set()
+            self.viewport.update()
+        elif action == "rename_body_to":
+            bid, name = payload
+            if name != doc.body_name(bid):
+                doc.set_body_prop(bid, "name", name)
+        elif action == "rename_feature_to":
+            fid, name = payload
+            f = doc.feature(fid)
+            if f and name != f.name:
+                snap = doc.snapshot()
+                doc.rename_feature(fid, name)
+                doc.push_undo("Rename", snap)
         elif action == "select":
             pass
+
+    def feature_bodies(self, fid):
+        """Bodies created or modified by a feature (diff of timeline states)."""
+        doc = self.doc
+        try:
+            i = doc.index_of(fid)
+        except StopIteration:
+            return set()
+        after = doc._states[i] if i < len(doc._states) else None
+        before = doc._states[i - 1] if i > 0 else None
+        if after is None:
+            return set()
+        out = set()
+        for bid, b in after.bodies.items():
+            old = before.bodies.get(bid) if before else None
+            if old is None or old.token != b.token:
+                out.add(bid)
+        return {b for b in out if b in self.viewport.vstate.bodies}
+
+    def look_at(self):
+        vp = self.viewport
+        for p in reversed(vp.selection):
+            ref = self._plane_ref_from_pick(p) if p.kind in ("face", "plane") else None
+            if ref is None:
+                continue
+            fr = R.resolve_plane(vp.vstate, ref)
+            vp.look_at_frame(fr)
+            return
+        if self.session is not None:
+            vp.look_at_frame(self.session.frame)
+            return
+        self.statusBar().showMessage("Select a planar face or plane to look at", 4000)
 
     def _set_marker(self, n):
         if self.session is not None:

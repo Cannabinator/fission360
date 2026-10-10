@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from OpenGL import GL
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPolygonF,
                            QSurfaceFormat)
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -32,6 +32,22 @@ class Pick:
     key: str             # body id / sketch feature id / plane name
     index: int = -1      # sub-element index (face index, entity id, ...)
     point: tuple = field(default=(0.0, 0.0, 0.0), compare=False, hash=False)
+
+
+@dataclass
+class Manipulator:
+    """In-canvas drag handle (Fusion's distance arrows).
+
+    The handle sits at ``origin + direction * value``; dragging it projects
+    the cursor ray onto the handle's axis and reports the new value.
+    """
+    origin: np.ndarray
+    direction: np.ndarray
+    value: float
+    on_drag: object                 # callable(new_value, final: bool)
+    label: str = ""
+    kind: str = "arrow"             # arrow | dot
+    min_value: float | None = None
 
 
 KIND_PRIORITY = {"spoint": 0, "vertex": 1, "curve": 2, "edge": 3, "axis": 4, "origin": 2, "profile": 6,
@@ -138,6 +154,17 @@ class Viewport(QOpenGLWidget):
         self._timer.timeout.connect(self._tick)
         self.fps_ms = 0.0
         self.labels: list = []                    # overlay labels from tools: (world pt, text, color)
+        self.manipulators: list[Manipulator] = []
+        self._manip_hover = None
+        self._manip_drag = None
+        self._box = None                          # rubber-band selection (x0, y0, x1, y1)
+        self._box_anchor = None
+        self.highlight_bodies: set[str] = set()   # e.g. bodies of the hovered timeline feature
+        self.show_dimensions = True
+        self.show_constraints = True
+        self.hide_profiles = False
+        self._cube_press = None
+        self._moved = False
 
     # ------------------------------------------------------------------ public API
     @property
@@ -350,7 +377,7 @@ class Viewport(QOpenGLWidget):
                         col = THEME.sk_origin
                     self.sketch_pts.add_points(fr.to_world(sk.xy(p.id)), (*col, 1.0), pbase + p.id)
             # Profiles (closed regions)
-            show_prof = active or fid in self.show_profiles_for
+            show_prof = (active and not self.hide_profiles) or fid in self.show_profiles_for
             if show_prof:
                 try:
                     profs = so.profiles if not active else K.build_profiles(sk, fr)
@@ -477,6 +504,8 @@ class Viewport(QOpenGLWidget):
                         r.draw_body(g, mvp, view, col, 1.0, hl, THEME.hover)
                 if body_sel:
                     r.draw_faces_flat(g, mvp, view, list(g.face_ranges), THEME.select, 0.35)
+                elif b.id in self.highlight_bodies:
+                    r.draw_faces_flat(g, mvp, view, list(g.face_ranges), THEME.hover, 0.25)
                 if b.id in sel_faces:
                     r.draw_faces_flat(g, mvp, view, sel_faces[b.id], THEME.select, 0.55)
                 if self.style in ("shaded_edges", "wireframe"):
@@ -575,6 +604,13 @@ class Viewport(QOpenGLWidget):
 
     # ------------------------------------------------------------------ overlay (QPainter)
     def _draw_overlay(self, p: QPainter):
+        self._draw_manipulators(p)
+        if self._box is not None:
+            x0, y0, x1, y1 = self._box
+            crossing = x1 < x0
+            p.setPen(QPen(QColor(10, 100, 214), 1, Qt.DashLine if crossing else Qt.SolidLine))
+            p.setBrush(QColor(10, 160, 60, 40) if crossing else QColor(10, 100, 214, 40))
+            p.drawRect(QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized())
         self._draw_view_cube(p)
         self._draw_triad(p)
         if self.tool is not None and hasattr(self.tool, "paint"):
@@ -612,7 +648,7 @@ class Viewport(QOpenGLWidget):
         self._dim_rects = {}
         pen = QPen(_qc(THEME.dim_line), 1.0)
         for c in sk.constraints.values():
-            if not c.param:
+            if not c.param or not self.show_dimensions:
                 continue
             try:
                 val = self.doc.param_value(c.param)
@@ -620,8 +656,8 @@ class Viewport(QOpenGLWidget):
             except Exception:
                 continue
             txt = format_angle(val) if c.kind == "angle" else format_length(val)
-            if expr.strip() not in (txt, txt.replace(" ", "")) and not _is_plain_number(expr, val, c.kind):
-                txt = f"{c.param}: {txt}" if any(ch.isalpha() for ch in expr.replace("mm", "").replace("deg", "")) else txt
+            if not _is_plain_number(expr, val, c.kind):
+                txt = f"fx: {txt}"  # driven by an expression / parameter
             sel = any(q.kind == "constraint" and q.index == c.id for q in self.selection)
             col = THEME.select if sel else THEME.dim_text
             pos = self._dim_anchor(sk, c)
@@ -659,7 +695,7 @@ class Viewport(QOpenGLWidget):
         counts = {}
         for c in sk.constraints.values():
             g = glyph.get(c.kind)
-            if not g:
+            if not g or not self.show_constraints:
                 continue
             for ref in c.refs[:2]:
                 e = sk.entities.get(ref)
@@ -823,13 +859,41 @@ class Viewport(QOpenGLWidget):
         p.drawPath(path)
         p.drawRect(QRectF(r.left() + 4, r.center().y(), r.width() - 8, r.height() / 2 - 2))
 
+    CUBE_FACES = {"Top": ([0, 0, 1], [0, 1, 0]), "Bottom": ([0, 0, -1], [0, -1, 0]), "Front": ([0, -1, 0], [0, 0, 1]),
+                  "Back": ([0, 1, 0], [0, 0, 1]), "Right": ([1, 0, 0], [0, 0, 1]), "Left": ([-1, 0, 0], [0, 0, 1])}
+
     def _cube_pick(self, x, y):
+        """Return (label, view_dir, up) for the ViewCube region under (x, y).
+
+        Clicking near a face's border picks the adjacent edge view, near a
+        corner the corner (isometric) view -- 26 views like Fusion's cube.
+        """
         pt = QPointF(x, y)
         if getattr(self, "_home_rect", None) is not None and self._home_rect.contains(pt):
-            return "Home"
+            return ("Home",) + tuple(np.array(v, float) for v in STANDARD_VIEWS["Home"])
         for depth, name, poly, _ in reversed(self._cube_faces()):
-            if depth > 0.02 and poly.containsPoint(pt, Qt.OddEvenFill):
-                return name
+            if depth <= 0.02 or not poly.containsPoint(pt, Qt.OddEvenFill):
+                continue
+            c0, c1, c3 = poly[0], poly[1], poly[3]
+            a = np.array([[c1.x() - c0.x(), c3.x() - c0.x()], [c1.y() - c0.y(), c3.y() - c0.y()]])
+            try:
+                uv = np.linalg.solve(a, [x - c0.x(), y - c0.y()]) * 2 - 1
+            except np.linalg.LinAlgError:
+                uv = np.zeros(2)
+            n, up = (np.array(v, float) for v in self.CUBE_FACES[name])
+            rt = np.cross(up, n)
+            d = n.copy()
+            if abs(uv[0]) > 0.55:
+                d += rt * np.sign(uv[0])
+            if abs(uv[1]) > 0.55:
+                d += up * np.sign(uv[1])
+            d /= np.linalg.norm(d)
+            label = name if np.allclose(d, n) else f"{name}*"
+            if abs(d[2]) < 0.99:
+                view_up = np.array([0, 0, 1.0])
+            else:
+                view_up = np.array([0, 1.0, 0]) if d[2] > 0 else np.array([0, -1.0, 0])
+            return label, -d, view_up
         return None
 
     def _draw_triad(self, p: QPainter):
@@ -955,13 +1019,20 @@ class Viewport(QOpenGLWidget):
         self._last = (x, y)
         self._moved = False
         btn, mods = ev.button(), ev.modifiers()
+        self._box = None
+        self._box_anchor = None
         if btn == Qt.LeftButton:
             cube = self._cube_pick(x, y)
             if cube:
+                # click = snap to that view, drag = orbit
+                self._cube_press = cube
+                self._nav = "orbit"
+                self._pivot = self.cam.target.copy()
+                return
+            m = self._manip_at(x, y)
+            if m is not None:
+                self._manip_drag = m
                 self._nav = None
-                v = STANDARD_VIEWS[cube]
-                self.animate_view(v[0], v[1], fit=cube == "Home")
-                self._press = None
                 return
         if btn == Qt.MiddleButton or btn == Qt.RightButton or (btn == Qt.LeftButton and mods & Qt.AltModifier):
             orbit = (btn == Qt.MiddleButton and mods & Qt.ShiftModifier) or btn == Qt.RightButton or \
@@ -977,12 +1048,25 @@ class Viewport(QOpenGLWidget):
             if self.tool.press(self, x, y, ev):
                 self.update()
                 return
+        if btn == Qt.LeftButton and getattr(self.tool, "drag", None) is None:
+            hit = self.pick_at(x, y)
+            if hit is None and not (self.sketch_ctx and (self.glyph_at(x, y) or self.dimension_at(x, y))):
+                self._box_anchor = (x, y)
 
     def mouseMoveEvent(self, ev):
         x, y = ev.position().x(), ev.position().y()
         if self._press is not None and math.hypot(x - self._press[0], y - self._press[1]) > 4:
             self._moved = True
+        if self._manip_drag is not None:
+            self._drag_manip(x, y, final=False)
+            return
+        if self._box_anchor is not None and self._moved and (ev.buttons() & Qt.LeftButton):
+            self._box = (*self._box_anchor, x, y)
+            self.update()
+            return
         if self._nav and self._last:
+            if self._cube_press is not None and not self._moved:
+                return
             dx, dy = x - self._last[0], y - self._last[1]
             if self._nav == "orbit":
                 self.cam.orbit(dx, dy, self._pivot)
@@ -994,14 +1078,22 @@ class Viewport(QOpenGLWidget):
             return
         self._last = (x, y)
         cube = self._cube_pick(x, y)
-        if cube != self._cube_hover:
-            self._cube_hover = cube
+        cube_name = cube[0].rstrip("*") if cube else None
+        if cube_name != self._cube_hover:
+            self._cube_hover = cube_name
             self.update()
         if self.tool is not None and hasattr(self.tool, "move"):
             if self.tool.move(self, x, y, ev):
                 self.update()
                 return
         if ev.buttons() == Qt.NoButton:
+            mh = self._manip_at(x, y)
+            if mh is not self._manip_hover:
+                self._manip_hover = mh
+                self.setCursor(Qt.SizeAllCursor if mh is not None else Qt.ArrowCursor)
+                self.update()
+            if mh is not None:
+                return
             h = self.pick_at(x, y)
             if h != self.hover:
                 self.hover = h
@@ -1014,6 +1106,21 @@ class Viewport(QOpenGLWidget):
         self._press = None
         nav = self._nav
         self._nav = None
+        if self._manip_drag is not None:
+            self._drag_manip(x, y, final=True)
+            self._manip_drag = None
+            return
+        if self._cube_press is not None:
+            cube, self._cube_press = self._cube_press, None
+            if not self._moved:
+                self.animate_view(cube[1], cube[2], fit=cube[0] == "Home")
+            return
+        if self._box is not None:
+            box, self._box, self._box_anchor = self._box, None, None
+            self.box_select(box, ev.modifiers())
+            self.update()
+            return
+        self._box_anchor = None
         if press is None:
             return
         if press[2] == Qt.RightButton and not self._moved:
@@ -1094,6 +1201,199 @@ class Viewport(QOpenGLWidget):
         if self.hover is not None:
             self.hover = None
             self.update()
+
+    def event(self, ev):
+        # Let tools capture plain keys (typed sketch values) before the
+        # window's single-key shortcuts fire.
+        if ev.type() == QEvent.ShortcutOverride and self.tool is not None and \
+                hasattr(self.tool, "wants_key") and self.tool.wants_key(ev):
+            ev.accept()
+            return True
+        if ev.type() == QEvent.KeyPress and ev.key() in (Qt.Key_Tab, Qt.Key_Backtab) and \
+                self.tool is not None and hasattr(self.tool, "wants_key") and self.tool.wants_key(ev):
+            self.keyPressEvent(ev)  # Tab cycles typed-value fields instead of moving focus
+            return True
+        return super().event(ev)
+
+    # ------------------------------------------------------------------ manipulators
+    def set_manipulators(self, manips):
+        self.manipulators = list(manips)
+        self._manip_hover = None
+        self.update()
+
+    @staticmethod
+    def _manip_handle(m):
+        return np.asarray(m.origin, float) + np.asarray(m.direction, float) * m.value
+
+    def _manip_at(self, x, y):
+        best = None
+        for m in self.manipulators:
+            s = self.screen_of(self._manip_handle(m))
+            d = math.hypot(s[0] - x, s[1] - y)
+            if d < 14 and (best is None or d < best[0]):
+                best = (d, m)
+        return best[1] if best else None
+
+    def _drag_manip(self, x, y, final):
+        m = self._manip_drag
+        o, d = np.asarray(m.origin, float), np.asarray(m.direction, float)
+        ro, rd = self.cam.ray(x, y)
+        w0 = o - ro
+        b = float(np.dot(d, rd))
+        den = 1.0 - b * b
+        if den < 1e-6:
+            return  # axis points straight at the viewer
+        t = (b * float(np.dot(rd, w0)) - float(np.dot(d, w0))) / den
+        # snap to a "nice" increment depending on zoom; Ctrl = free drag
+        from PySide6.QtWidgets import QApplication
+        if not QApplication.keyboardModifiers() & Qt.ControlModifier:
+            px = self.cam.pixel_size_at(o) * 6
+            step = 10 ** math.floor(math.log10(max(px, 1e-6)))
+            for k in (1, 2, 5, 10):
+                if step * k >= px:
+                    step *= k
+                    break
+            t = round(t / step) * step
+        if m.min_value is not None:
+            t = max(m.min_value, t)
+        m.value = t
+        m.on_drag(t, final)
+        self.update()
+
+    def _draw_manipulators(self, p: QPainter):
+        for m in self.manipulators:
+            o = np.asarray(m.origin, float)
+            h = self._manip_handle(m)
+            so, sh = self.screen_of(o), self.screen_of(h)
+            sd = self.screen_of(o + np.asarray(m.direction) * self.cam.pixel_size_at(o) * 40) - so
+            n = np.linalg.norm(sd)
+            if n < 1e-6:
+                continue
+            u = sd / n
+            hot = m is self._manip_hover or m is self._manip_drag
+            col = QColor(230, 120, 20) if hot else QColor(10, 100, 214)
+            p.setPen(QPen(col, 2))
+            p.drawLine(QPointF(*so), QPointF(*sh))
+            perp = np.array([-u[1], u[0]])
+            if m.kind == "arrow":
+                tip = sh + u * 24
+                p.setPen(QPen(col, 2))
+                p.drawLine(QPointF(*sh), QPointF(*(sh + u * 10)))
+                p.setPen(Qt.NoPen)
+                p.setBrush(col)
+                p.drawPolygon(QPolygonF([QPointF(*tip), QPointF(*(sh + u * 9 + perp * 7)),
+                                         QPointF(*(sh + u * 9 - perp * 7))]))
+            p.setPen(QPen(QColor(255, 255, 255), 1.5))
+            p.setBrush(col)
+            p.drawEllipse(QPointF(*sh), 6, 6)
+            if m.label:
+                self._label(p, sh[0] + perp[0] * 34, sh[1] + perp[1] * 34, m.label,
+                            (0.9, 0.45, 0.05) if hot else None)
+
+    # ------------------------------------------------------------------ box selection
+    def box_select(self, box, mods=Qt.NoModifier):
+        """Window (drag left->right: fully inside) or crossing (right->left) selection."""
+        x0, y0, x1, y1 = box
+        crossing = x1 < x0
+        lo = np.array([min(x0, x1), min(y0, y1)])
+        hi = np.array([max(x0, x1), max(y0, y1)])
+
+        def hit(world_pts):
+            world_pts = np.asarray(world_pts, float).reshape(-1, 3)
+            if len(world_pts) == 0:
+                return False
+            s2 = self.cam.project(world_pts, self._scene_radius)[:, :2]
+            ins = np.all((s2 >= lo) & (s2 <= hi), axis=1)
+            return bool(ins.any()) if crossing else bool(ins.all())
+
+        picks = []
+        visible_ids = self._ids_in_rect(lo, hi) if crossing and self.sketch_ctx is None else {}
+        if self.sketch_ctx is not None:
+            fid, sk, fr = self.sketch_ctx
+            for e in sk.curves():
+                if hit(fr.to_world(sk.polyline(e, seg_len=self.cam.pixel_size_at(fr.origin) * 4))):
+                    picks.append(Pick("curve", fid, e.id))
+            for pt in sk.points():
+                if pt.id and pt.owner is None and hit(fr.to_world(np.array([sk.xy(pt.id)]))):
+                    picks.append(Pick("spoint", fid, pt.id))
+        else:
+            want_edges = self.filter is not None and "edge" in self.filter
+            if self.filter is not None and not want_edges and "face" not in self.filter:
+                return
+            for b in self.vstate.bodies.values():
+                if not self.doc.body_visible(b.id) or b.id in self.hidden_bodies or b.id not in self.gpu:
+                    continue
+                mesh = self.gpu[b.id][1].mesh
+                seen = visible_ids.get(b.id, {})
+                if want_edges:
+                    for i, pl in enumerate(mesh.edge_lines):
+                        if i in seen.get("edge", ()) or hit(pl):
+                            picks.append(Pick("edge", b.id, i))
+                else:
+                    pos = mesh.positions[::max(1, len(mesh.positions) // 4000)]
+                    if seen or hit(pos):
+                        picks.append(Pick("body", b.id))
+        additive = bool(mods & (Qt.ShiftModifier | Qt.ControlModifier)) or self.filter is not None
+        sel = list(self.selection) if additive else []
+        for p in picks:
+            if p not in sel:
+                sel.append(p)
+        self.selection = sel
+        self.scene_dirty = True
+        self.selection_changed.emit()
+        self.status.emit(f"{len(picks)} item(s) selected ({'crossing' if crossing else 'window'})")
+
+    def _ids_in_rect(self, lo, hi):
+        """Visible pickable elements inside a screen rectangle (crossing select)."""
+        self._render_pick()
+        self.makeCurrent()
+        dpr = self._dpr()
+        H = int(self.height() * dpr)
+        cx, cy = (lo + hi) / 2 * dpr
+        rad = int(max(hi - lo) / 2 * dpr) + 1
+        ids, _, (x0, y0) = self.r.read_pick(int(cx), int(cy), H, rad)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
+        out: dict = {}
+        if ids is None:
+            return out
+        # read_pick returns a square; clip it to the actual rectangle
+        ys, xs = np.nonzero(ids)
+        for iy, ix in zip(ys, xs):
+            px, py = (ix + x0) / dpr, (H - 1 - (iy + y0)) / dpr
+            if not (lo[0] <= px <= hi[0] and lo[1] <= py <= hi[1]):
+                continue
+            res = self.reg.lookup(int(ids[iy, ix]))
+            if res is None:
+                continue
+            kind, key, local = res
+            out.setdefault(key, {}).setdefault(kind, set()).add(local)
+        return out
+
+    # ------------------------------------------------------------------ view helpers
+    def selection_bounds(self):
+        los, his = [], []
+        st = self.vstate
+        for p in self.selection:
+            b = st.bodies.get(p.key)
+            if b is None:
+                continue
+            shape = K.faces(b.shape)[p.index] if p.kind == "face" else \
+                K.edges(b.shape)[p.index] if p.kind == "edge" else b.shape
+            lo, hi = K.bbox(shape)
+            los.append(lo)
+            his.append(hi)
+        if not los:
+            return None
+        return np.min(los, 0), np.max(his, 0)
+
+    def fit_selection(self):
+        bb = self.selection_bounds()
+        if bb is None:
+            self.fit_all()
+            return
+        c, d = self.cam.fit(*bb)
+        self.cam.start_animation(self.cam.rot, c, d * 1.3)
+        self._timer.start()
 
     # ------------------------------------------------------------------ helpers for tools
     def screen_of(self, world) -> np.ndarray:
