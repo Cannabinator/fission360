@@ -358,6 +358,8 @@ class _Strip(QWidget):
             m.addAction(icon("warning"), "Repair lost references...", lambda: self.tl.request.emit("repair", f.id))
         m.addAction("Edit Feature" if f.type != "sketch" else "Edit Sketch",
                     lambda: self.tl.request.emit("edit_feature", f.id))
+        if f.type == "joint":
+            m.addAction(icon("joint"), "Joint Motion / Limits...", lambda: self.tl.request.emit("joint_motion", f.id))
         m.addAction("Rename...", lambda: self.tl.request.emit("rename_feature", f.id))
         m.addAction("Unsuppress Feature" if f.suppressed else "Suppress Feature",
                     lambda: self.tl.request.emit("suppress", f.id))

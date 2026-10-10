@@ -1148,6 +1148,10 @@ class MainWindow(QMainWindow):
             snap = doc.snapshot()
             doc.set_suppressed(payload, not f.suppressed)
             doc.push_undo("Suppress" if f.suppressed else "Unsuppress", snap)
+        elif action == "joint_motion":
+            f = doc.feature(payload)
+            if f is not None and self.panel is None and self.session is None:
+                D.JointMotionDialog(self, f).exec()
         elif action == "repair":
             self.edit_feature(payload)
         elif action == "hover":

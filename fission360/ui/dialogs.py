@@ -793,3 +793,111 @@ class VersionsDialog(QDialog):
             del self.doc.versions[i]
             self.doc.modified = True
             self.populate()
+
+
+class JointMotionDialog(QDialog):
+    """Drive a joint with a slider or play it back and forth; limits are stored on the joint."""
+
+    def __init__(self, win, feature):
+        super().__init__(win)
+        from PySide6.QtWidgets import QCheckBox, QSlider
+        self.win, self.doc, self.f = win, win.doc, feature
+        jt = feature.data.get("joint_type", "rigid")
+        self.key = "offset" if jt == "slider" else "angle"
+        self.unit = "mm" if self.key == "offset" else "deg"
+        self.setWindowTitle(f"Joint motion - {feature.name}")
+        self.snap = win.doc.snapshot()
+        lim = feature.data.get("limits") or ([0.0, 50.0] if self.key == "offset" else [-180.0, 180.0])
+        lay = QVBoxLayout(self)
+        if jt == "rigid":
+            lay.addWidget(QLabel("A rigid joint has no motion. Change its type to revolute, slider or cylindrical."))
+        form = QFormLayout()
+        self.lo = QDoubleSpinBox()
+        self.hi = QDoubleSpinBox()
+        for sp, v in ((self.lo, lim[0]), (self.hi, lim[1])):
+            sp.setRange(-1e5, 1e5)
+            sp.setDecimals(2)
+            sp.setSuffix(f" {self.unit}")
+            sp.setValue(v)
+            sp.valueChanged.connect(self._limits_changed)
+        form.addRow("Minimum", self.lo)
+        form.addRow("Maximum", self.hi)
+        lay.addLayout(form)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 1000)
+        self.slider.valueChanged.connect(self._slide)
+        self.value_lbl = QLabel()
+        lay.addWidget(self.slider)
+        lay.addWidget(self.value_lbl)
+        self.play = QPushButton("Play")
+        self.play.setCheckable(True)
+        self.play.toggled.connect(self._toggle_play)
+        lay.addWidget(self.play)
+        self.timer = QTimer(self)
+        self.timer.setInterval(40)
+        self.timer.timeout.connect(self._tick)
+        self._dir = 1
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._ok)
+        bb.rejected.connect(self._cancel)
+        lay.addWidget(bb)
+        self.slider.setEnabled(jt != "rigid")
+        self.play.setEnabled(jt != "rigid")
+        cur = self._current()
+        self.slider.blockSignals(True)
+        self.slider.setValue(self._to_slider(cur))
+        self.slider.blockSignals(False)
+        self._show(cur)
+
+    def _current(self):
+        v = self.doc.val(self.f, self.key, 0.0)
+        return v if self.key == "offset" else math.degrees(v)
+
+    def _range(self):
+        lo, hi = self.lo.value(), self.hi.value()
+        return (lo, hi) if hi > lo else (lo, lo + 1e-6)
+
+    def _to_slider(self, v):
+        lo, hi = self._range()
+        return int(round(1000 * min(max((v - lo) / (hi - lo), 0), 1)))
+
+    def _show(self, v):
+        self.value_lbl.setText(f"{v:.2f} {self.unit}")
+
+    def _slide(self, pos):
+        lo, hi = self._range()
+        self.set_value(lo + (hi - lo) * pos / 1000)
+
+    def set_value(self, v):
+        self.doc.set_param(self.f.params[self.key], f"{v:.6g} {self.unit}")
+        self._show(v)
+        self.win.refresh_all()
+
+    def _limits_changed(self):
+        self.f.data["limits"] = [self.lo.value(), self.hi.value()]
+        self.doc.rebuild(force=True)
+        self.slider.blockSignals(True)
+        self.slider.setValue(self._to_slider(self._current()))
+        self.slider.blockSignals(False)
+
+    def _toggle_play(self, on):
+        self.play.setText("Pause" if on else "Play")
+        self.timer.start() if on else self.timer.stop()
+
+    def _tick(self):
+        pos = self.slider.value() + 15 * self._dir
+        if pos >= 1000 or pos <= 0:
+            self._dir = -self._dir
+            pos = min(max(pos, 0), 1000)
+        self.slider.setValue(pos)
+
+    def _ok(self):
+        self.timer.stop()
+        self.doc.push_undo("Joint motion", self.snap)
+        self.accept()
+
+    def _cancel(self):
+        self.timer.stop()
+        self.doc.restore(self.snap)
+        self.win.refresh_all()
+        self.reject()

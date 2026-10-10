@@ -336,13 +336,25 @@ class Design:
         """Group bodies into a named component (moves together under joints, exported as an assembly)."""
         self.doc.set_component([b.body_id for b in bodies], name)
 
-    def joint(self, moving, fixed, kind="rigid", offset="0 mm", angle="0 deg", flip=False):
+    def joint(self, moving, fixed, kind="rigid", offset="0 mm", angle="0 deg", flip=False, limits=None):
         """Mate a face of the moving part to a face of the fixed part.
 
         kind: rigid | revolute | slider | cylindrical
         """
-        self._add("joint", default_data("joint") | {"faces": self._face_refs([moving, fixed]), "joint_type": kind,
-                                                    "flip": flip}, {"offset": offset, "angle": angle})
+        return self._add("joint", default_data("joint") | {"faces": self._face_refs([moving, fixed]), "joint_type": kind,
+                                                    "flip": flip, "limits": list(limits) if limits else None},
+                  {"offset": offset, "angle": angle})
+
+    def animate(self, joint_feature, values, on_frame=None):
+        """Drive a joint's motion parameter through ``values`` (degrees, or mm for sliders); calls ``on_frame(value)``
+        after each rebuild.  The last value is kept."""
+        f = joint_feature if hasattr(joint_feature, "params") else self.doc.feature(joint_feature)
+        key = "offset" if f.data.get("joint_type") == "slider" else "angle"
+        unit = " mm" if key == "offset" else " deg"
+        for v in values:
+            self.doc.set_param(f.params[key], f"{v:g}{unit}")
+            if on_frame:
+                on_frame(v)
 
     def mirror(self, body: Selection, plane="YZ", combine=True):
         self._add("mirror", {"bodies": [body.body_id], "plane": plane, "combine": combine})

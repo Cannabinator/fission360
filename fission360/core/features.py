@@ -855,6 +855,19 @@ def _exec_joint(doc, f, state):
         target = -target
     axis, ang = K.rotation_between(md, target)
     off, rot = doc.val(f, "offset", 0.0), doc.val(f, "angle", 0.0)
+    lim = f.data.get("limits")            # [min, max] on the joint's motion: degrees, or mm for sliders
+    if lim and jt != "rigid":
+        if jt == "slider":
+            clamped = min(max(off, lim[0]), lim[1])
+            if clamped != off:
+                f.warning = f"Travel limited to {lim[0]:g}..{lim[1]:g} mm"
+            off = clamped
+        else:
+            lo, hi = math.radians(lim[0]), math.radians(lim[1])
+            clamped = min(max(rot, lo), hi)
+            if abs(clamped - rot) > 1e-12:
+                f.warning = f"Rotation limited to {lim[0]:g}..{lim[1]:g} deg"
+            rot = clamped
     gap_dir = fd if fk == "plane" else target       # offset pushes the part away from a mating plane
     if jt in ("rigid", "revolute"):
         shift = gap_dir * off if fk == "plane" else np.zeros(3)

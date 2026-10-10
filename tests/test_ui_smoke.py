@@ -76,3 +76,34 @@ def test_joint_command_and_component_browser(tmp_path, monkeypatch):
     assert "Bodies (2)" in names
     win.doc.modified = False
     win.close()
+
+
+def test_joint_motion_dialog(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtWidgets import QApplication
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
+    app = QApplication.instance() or QApplication([])
+    from fission360.api import Design
+    from fission360.core import kernel as K
+    from fission360.ui import dialogs as D
+    from fission360.ui.main_window import MainWindow
+    win = MainWindow()
+    win.show()
+    d = Design(win.doc)
+    a = d.box(0, 0, 40, 30, 10)
+    b = d.box(100, 0, 20, 20, 10)
+    fa = a.faces(normal=(0, 0, 1))[0]
+    fb = b.faces(normal=(0, 0, -1))[0]
+    j = d.joint(fb, fa, kind="revolute", limits=(-90, 90))
+    dlg = D.JointMotionDialog(win, j)
+    dlg.slider.setValue(1000)             # maximum = +90 deg
+    lo, hi = K.bbox(win.doc.state.bodies[b.body_id].shape)
+    assert abs((hi - lo)[1] - 20) < 1e-3 and abs((hi - lo)[0] - 20) < 1e-3   # square block rotated 90 deg
+    dlg._cancel()
+    assert win.doc.val(win.doc.feature(j.id), "angle") == 0
+    win.doc.modified = False
+    win.close()

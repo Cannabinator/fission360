@@ -124,3 +124,45 @@ def test_drawing_views_hidden_lines_and_formats(tmp_path):
     dxf = (tmp_path / "p.dxf").read_text()
     assert "HIDDEN" in dxf and "VISIBLE" in dxf and dxf.rstrip().endswith("EOF")
     assert drawing.SHEETS["A3"][0] > 400
+
+
+def test_joint_limits_clamp_and_animate():
+    d, a, b = two_blocks()
+    j = d.joint(bottom(b), top(a), kind="revolute", angle="0 deg", limits=(-45, 60))
+    seen = []
+
+    def frame(v):
+        lo, hi = lo_hi(d.bodies[1])
+        seen.append((v, round(float((hi - lo)[0]), 3)))
+
+    d.animate(j, [0, 30, 90], on_frame=frame)
+    assert j.warning and "limited" in j.warning            # 90 deg is clamped to 60
+    w60 = 20 * np.cos(np.radians(60)) + 20 * np.sin(np.radians(60))
+    assert seen[-1][1] == pytest.approx(w60, abs=1e-2)
+    assert seen[0][1] == pytest.approx(20, abs=1e-3)
+
+
+def test_slider_limits():
+    d, a, b = two_blocks()
+    j = d.joint(bottom(b), top(a), kind="slider", offset="30 mm", limits=(0, 12))
+    lo, _ = lo_hi(d.bodies[1])
+    assert lo[2] == pytest.approx(10 + 12, abs=1e-6)
+
+
+def test_drawing_centre_marks_callouts_and_section(tmp_path):
+    from fission360 import drawing
+    d = Design()
+    a = d.box(0, 0, 60, 40, 20)
+    d.hole(a.faces(normal=(0, 0, 1))[0], at=(30, 20), diameter="10 mm", depth="20 mm")
+    sheet = d.drawing(str(tmp_path / "s.svg"), views=("front", "top", "section"))
+    d.drawing(str(tmp_path / "s.dxf"), views=("front", "top", "section"))
+    v = {x.name: x for x, _, _ in sheet.placed}
+    assert [n[0] for n in v["top"].notes] == ["Ø10"] and len(v["top"].marks) == 2
+    assert len(v["front"].marks) == 1
+    assert v["section"].hatch and not v["section"].hidden
+    segs = drawing.hatch_lines(v["section"].hatch, 3.0)
+    xs = [p[0] for s in segs for p in s]
+    assert segs and not any(25.01 < x < 34.99 for x in xs)      # nothing hatched across the 10 mm bore
+    svg = (tmp_path / "s.svg").read_text()
+    assert "SECTION A-A" in svg and 'class="x"' in svg
+    assert "HATCH" in (tmp_path / "s.dxf").read_text()
