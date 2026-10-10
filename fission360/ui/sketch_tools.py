@@ -331,6 +331,15 @@ class SelectTool(SketchTool):
         self.s.live_update()
         return True
 
+    def double_click(self, vp, x, y):
+        p = vp.pick_at(x, y, {"curve"})
+        if p is not None and p.key == self.s.fid:
+            e = self.sk.entities.get(p.index)
+            if e is not None and e.kind == "text":
+                self.s.edit_text(e.id)
+                return True
+        return False
+
     def release(self, vp, x, y, ev):
         if self.drag is not None and getattr(self, "dragged", False):
             self.drag = None
@@ -1385,11 +1394,104 @@ class ProjectTool(SketchTool):
         return True
 
 
+class EllipseTool(TwoClickTool):
+    name = "ellipse"
+    label = "Ellipse"
+    hint = "Click the center, the end of the major axis, then a point for the minor radius."
+    clicks_needed = 3
+
+    @staticmethod
+    def _geom(c, m, q):
+        c, m, q = np.asarray(c), np.asarray(m), np.asarray(q)
+        a = float(np.linalg.norm(m - c))
+        if a < 1e-9:
+            return None
+        u = (m - c) / a
+        v = np.array([-u[1], u[0]])
+        b = abs(float(np.dot(q - c, v)))
+        return c, u, v, a, max(b, 1e-6)
+
+    def draw_preview(self, vp, uvs):
+        if len(uvs) == 2:
+            self.preview(vp, [[uvs[0], uvs[1]]])
+            return
+        g = self._geom(*uvs)
+        if g is None:
+            return
+        c, u, v, a, b = g
+        t = np.linspace(0, 2 * math.pi, 96)
+        self.preview(vp, [c + np.outer(a * np.cos(t), u) + np.outer(b * np.sin(t), v)])
+        vp.labels = []
+
+    def create(self, snaps):
+        c, m, q = (sn.uv for sn in snaps)
+        g = self._geom(c, m, q)
+        if g is None:
+            raise ValueError
+        eid = self.sk.add_ellipse(c, m, g[4])
+        self.attach(self.sk.entities[eid].pts[0], snaps[0])
+        self.attach(self.sk.entities[eid].pts[1], snaps[1])
+        return eid
+
+
+class TextTool(SketchTool):
+    name = "text"
+    hint = "Click where the text should start, then enter the text."
+
+    def move(self, vp, x, y, ev):
+        sn = self.snap(vp, x, y)
+        self.cur = sn
+        self.snap_marker(vp, sn)
+        return True
+
+    def press(self, vp, x, y, ev):
+        sn = self.snap(vp, x, y)
+        if sn is None:
+            return True
+        from .dialogs import TextDialog
+        dlg = TextDialog(vp, self.s.doc)
+        if dlg.exec():
+            v = dlg.values()
+            tid = self.sk.add_text(sn.uv, v["text"], v["height"], v["font"], v["bold"], v["italic"], v["angle"])
+            self.attach(self.sk.entities[tid].pts[0], sn)
+            self.sk.solve()
+            self.commit("Text")
+        return True
+
+    def double_click(self, vp, x, y):
+        return True
+
+
+class ExtendTool(SketchTool):
+    name = "extend"
+    hint = "Click near the end of a line to extend it to the next curve."
+
+    def press(self, vp, x, y, ev):
+        from ..sketch import ops
+        uv = vp.plane_point(x, y, self.fr)
+        p = vp.pick_at(x, y, {"curve"})
+        if p is None or p.key != self.s.fid or uv is None:
+            return True
+        e = self.sk.entities.get(p.index)
+        if e is None or e.kind != "line":
+            self.s.message("Extend works on lines")
+            return True
+        a, b = (np.array(self.sk.xy(i)) for i in e.pts)
+        end = e.pts[0] if math.dist(uv, a) < math.dist(uv, b) else e.pts[1]
+        if ops.extend_line(self.sk, e.id, end):
+            self.sk.solve()
+            self.commit("Extend")
+        else:
+            self.s.message("Nothing to extend to")
+        return True
+
+
 TOOLS = {
     "line": LineTool, "rect": RectTool, "rect_center": CenterRectTool, "circle": CircleTool,
     "arc": Arc3Tool, "arc_center": CenterArcTool, "polygon": PolygonTool, "slot": SlotTool,
     "spline": SplineTool, "point": PointTool, "dimension": DimensionTool, "trim": TrimTool,
-    "sketch_fillet": SketchFilletTool, "project": ProjectTool,
+    "sketch_fillet": SketchFilletTool, "project": ProjectTool, "ellipse": EllipseTool, "text": TextTool,
+    "extend": ExtendTool,
 }
 
 

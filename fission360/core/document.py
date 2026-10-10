@@ -64,10 +64,11 @@ class ModelState:
     planes: dict = field(default_factory=dict)       # feature id -> Frame
     axes: dict = field(default_factory=dict)         # feature id -> (origin, dir)
     body_order: list = field(default_factory=list)   # creation order for default names
+    annotations: list = field(default_factory=list)  # cosmetic threads etc. (labels in the viewport)
 
     def copy(self) -> "ModelState":
         return ModelState(dict(self.bodies), dict(self.sketches), dict(self.planes), dict(self.axes),
-                          list(self.body_order))
+                          list(self.body_order), list(self.annotations))
 
     def add_body(self, bid: str, shape) -> Body:
         b = Body(bid, shape)
@@ -92,6 +93,7 @@ class Feature:
     params: dict = field(default_factory=dict)   # input key -> parameter name
     suppressed: bool = False
     error: str | None = None
+    error_kind: str | None = None                # "reference" when a face/edge/profile could not be re-found
     warning: str | None = None
     sketch: Sketch | None = None                 # live sketch object (type == sketch)
 
@@ -139,6 +141,7 @@ class Document:
         self._txn_depth = 0
         self._txn_snapshot = None
         self.last_rebuild_ms = 0.0
+        self.versions: list[dict] = []      # named snapshots: {"name", "time", "data"}
 
     # ------------------------------------------------------------------ events
     def notify(self, what="changed"):
@@ -304,6 +307,7 @@ class Document:
                 continue
             if f.suppressed:
                 f.error = None
+                f.error_kind = None
                 if f.sketch is not None:
                     f.sketch.param_value = self.param_value
             else:
@@ -312,9 +316,12 @@ class Document:
                     f.warning = None
                     execute(self, f, new)
                     f.error = None
+                    f.error_kind = None
                     state = new
                 except Exception as exc:  # feature failed: keep previous state
+                    from .references import ReferenceError_
                     f.error = str(exc) or type(exc).__name__
+                    f.error_kind = "reference" if isinstance(exc, ReferenceError_) else None
             self._states[i] = state
             self._prints[i] = prints[i]
         self.state = state if self.marker > 0 or n == 0 else ModelState()
@@ -382,7 +389,7 @@ class Document:
         self.features = fresh.features
         self.marker = fresh.marker
         self.body_props = fresh.body_props
-        self._fid = max(self._fid, fresh._fid)
+        self._fid = max(self._fid, fresh._fid)   # versions stay as they are (not part of a snapshot)
         # keep cached states for unchanged prefix (fingerprints decide)
         self._prints = [old.get(f.id, (None, None))[0] for f in self.features]
         self._states = [old.get(f.id, (None, None))[1] for f in self.features]
@@ -442,10 +449,13 @@ class Document:
         self.notify("history")
 
     # ------------------------------------------------------------------ persistence
-    def to_dict(self) -> dict:
-        return {"format": "fission360", "version": FILE_VERSION, "units": self.units, "fid": self._fid,
-                "marker": self.marker, "parameters": self.params.to_dict(),
-                "features": [f.to_dict() for f in self.features], "bodies": copy.deepcopy(self.body_props)}
+    def to_dict(self, include_versions: bool = False) -> dict:
+        d = {"format": "fission360", "version": FILE_VERSION, "units": self.units, "fid": self._fid,
+             "marker": self.marker, "parameters": self.params.to_dict(),
+             "features": [f.to_dict() for f in self.features], "bodies": copy.deepcopy(self.body_props)}
+        if include_versions and self.versions:
+            d["versions"] = copy.deepcopy(self.versions)
+        return d
 
     @staticmethod
     def from_dict(d: dict) -> "Document":
@@ -458,6 +468,7 @@ class Document:
         doc.features = [Feature.from_dict(fd) for fd in d.get("features", [])]
         doc.marker = d.get("marker", len(doc.features))
         doc.body_props = d.get("bodies", {})
+        doc.versions = copy.deepcopy(d.get("versions", []))
         for f in doc.features:
             if f.sketch is not None:
                 f.sketch.param_value = doc.param_value
@@ -465,11 +476,21 @@ class Document:
         doc._prints = [None] * len(doc.features)
         return doc
 
-    def save(self, path: str):
+    def save(self, path: str, compress: bool = False):
+        """Save as plain, sorted, indented JSON so designs diff and merge well in
+        Git.  ``compress=True`` writes gzip instead (smaller, not diffable)."""
         import gzip
-        data = json.dumps(self.to_dict(), separators=(",", ":")).encode()
-        with gzip.open(path, "wb", compresslevel=6) as fh:
-            fh.write(data)
+        data = json.dumps(self.to_dict(include_versions=True), sort_keys=True, indent=1,
+                          ensure_ascii=False).encode() + b"\n"
+        tmp = path + ".tmp"
+        if compress:
+            with gzip.open(tmp, "wb", compresslevel=6) as fh:
+                fh.write(data)
+        else:
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+        import os
+        os.replace(tmp, path)          # atomic: a crash never leaves a half-written file
         self.path = path
         self.modified = False
         self.notify("saved")
@@ -488,6 +509,50 @@ class Document:
         doc.rebuild()
         doc.modified = False
         return doc
+
+    # ------------------------------------------------------------------ versions
+    def save_version(self, name: str) -> dict:
+        import time as _t
+        v = {"name": name, "time": _t.strftime("%Y-%m-%d %H:%M:%S"), "data": self.to_dict()}
+        self.versions.append(v)
+        self.modified = True
+        self.notify("history")
+        return v
+
+    def restore_version(self, index: int):
+        """Roll the design back to a named version (undoable)."""
+        snap = self.snapshot()
+        self.restore(self.versions[index]["data"])
+        self.push_undo(f"Restore version '{self.versions[index]['name']}'", snap)
+
+    @staticmethod
+    def diff(a: dict, b: dict) -> list[str]:
+        """Feature-level difference between two design dicts (a -> b)."""
+        fa = {f["id"]: f for f in a.get("features", [])}
+        fb = {f["id"]: f for f in b.get("features", [])}
+        out = []
+        for fid, f in fb.items():
+            if fid not in fa:
+                out.append(f"+ added {f['name']} ({f['type']})")
+        for fid, f in fa.items():
+            if fid not in fb:
+                out.append(f"- removed {f['name']} ({f['type']})")
+        pa = {p["name"]: p["expr"] for p in a.get("parameters", {}).get("params", [])}
+        pb = {p["name"]: p["expr"] for p in b.get("parameters", {}).get("params", [])}
+        for fid, f in fb.items():
+            if fid in fa and json.dumps(fa[fid]["data"], sort_keys=True) != json.dumps(f["data"], sort_keys=True):
+                out.append(f"~ changed {f['name']} (inputs)")
+        for n, e in pb.items():
+            if n in pa and pa[n] != e:
+                out.append(f"~ parameter {n}: {pa[n]} -> {e}")
+            elif n not in pa:
+                out.append(f"+ parameter {n} = {e}")
+        for n in pa:
+            if n not in pb:
+                out.append(f"- parameter {n}")
+        if [f["id"] for f in a.get("features", []) if f["id"] in fb] != [f["id"] for f in b.get("features", []) if f["id"] in fa]:
+            out.append("~ timeline order changed")
+        return out or ["(no differences)"]
 
     # ------------------------------------------------------------------ queries
     def visible_bodies(self):
@@ -520,6 +585,8 @@ class Document:
             K.export_iges(shapes, path)
         elif ext == ".stl":
             K.export_stl(K.compound(shapes), path)
+        elif ext == ".3mf":
+            K.export_3mf([(self.body_name(b.id), b.shape) for b in bodies], path)
         elif ext == ".brep":
             K.export_brep(K.compound(shapes), path)
         elif ext == ".obj":

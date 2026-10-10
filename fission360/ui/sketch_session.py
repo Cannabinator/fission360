@@ -322,6 +322,136 @@ class SketchSession:
                 pts.append(np.array(sk.xy(e.pts[0])))
         return np.mean(pts, axis=0) if pts else None
 
+    # ------------------------------------------------------------------ modify commands
+    def _selected_curves(self):
+        sk = self.sketch
+        return [r for r in self.selected_refs() if r in sk.entities and sk.entities[r].kind not in ("point",)]
+
+    def _select_new(self, ids):
+        from .viewport import Pick
+        self.vp.selection = [Pick("curve", self.fid, i) for i in ids]
+        self.live_update()
+
+    def edit_text(self, eid):
+        from .dialogs import TextDialog
+        e = self.sketch.entities[eid]
+        dlg = TextDialog(self.vp, self.doc, e)
+        if dlg.exec():
+            v = dlg.values()
+            e.text, e.height, e.font, e.bold, e.italic, e.angle = (v["text"], v["height"], v["font"], v["bold"],
+                                                                   v["italic"], v["angle"])
+            self.changed("Edit text")
+
+    def offset(self):
+        from ..sketch import ops
+        from .dialogs import ValuesDialog
+        ids = self._selected_curves()
+        if not ids:
+            self.message("Select the curves to offset first")
+            return
+        dlg = ValuesDialog(self.vp, self.doc, "Offset", [("Distance", "length", "2 mm")],
+                           note="Positive = left of the curve direction / outward for counter-clockwise loops")
+        if not dlg.exec():
+            return
+        try:
+            new = ops.offset_curves(self.sketch, ids, dlg.values()[0], self.frame)
+        except SketchError as exc:
+            self.message(str(exc))
+            return
+        self.sketch.solve()
+        self.changed("Offset")
+        self._select_new(new)
+
+    def mirror(self):
+        from ..sketch import ops
+        sk = self.sketch
+        sel = self._selected_curves()
+        lines = [r for r in sel if sk.entities[r].kind == "line"]
+        if len(sel) < 2 or not lines:
+            self.message("Select the curves to mirror, then the mirror line last (e.g. a construction line)")
+            return
+        axis = lines[-1]
+        objs = [r for r in sel if r != axis]
+        try:
+            new = ops.mirror_curves(sk, objs, axis)
+        except SketchError as exc:
+            self.message(str(exc))
+            return
+        sk.solve()
+        self.changed("Mirror")
+        self._select_new(new)
+
+    def pattern_rect(self):
+        from ..sketch import ops
+        from .dialogs import ValuesDialog
+        ids = self._selected_curves()
+        if not ids:
+            self.message("Select the curves to pattern first")
+            return
+        dlg = ValuesDialog(self.vp, self.doc, "Rectangular Pattern",
+                           [("Count X", "scalar", "3"), ("Spacing X", "length", "10 mm"),
+                            ("Count Y", "scalar", "1"), ("Spacing Y", "length", "10 mm")])
+        if not dlg.exec():
+            return
+        nx, dx, ny, dy = dlg.values()
+        if nx * ny > 400:
+            self.message("Pattern too large (max 400 instances)")
+            return
+        new = ops.pattern_rect(self.sketch, ids, max(1, int(round(nx))), dx, max(1, int(round(ny))), dy)
+        self.sketch.solve()
+        self.changed("Rectangular pattern")
+        self._select_new(new)
+
+    def pattern_circ(self):
+        from ..sketch import ops
+        from .dialogs import ValuesDialog
+        sk = self.sketch
+        ids = self._selected_curves()
+        pts = [r for r in self.selected_refs() if sk.entities[r].kind == "point"]
+        if not ids:
+            self.message("Select the curves to pattern (and optionally a center point)")
+            return
+        dlg = ValuesDialog(self.vp, self.doc, "Circular Pattern",
+                           [("Count", "scalar", "6"), ("Total angle", "angle", "360 deg")],
+                           note="Pattern center: the selected sketch point, else the sketch origin")
+        if not dlg.exec():
+            return
+        count, ang = dlg.values()
+        center = sk.xy(pts[0]) if pts else (0.0, 0.0)
+        new = ops.pattern_circ(sk, ids, center, max(2, int(round(count))), ang)
+        sk.solve()
+        self.changed("Circular pattern")
+        self._select_new(new)
+
+    def import_2d(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from ..sketch import ops
+        path, _ = QFileDialog.getOpenFileName(self.vp, "Insert DXF / SVG into sketch", "",
+                                              "2D drawings (*.dxf *.svg);;All files (*)")
+        if not path:
+            return
+        try:
+            new = ops.import_2d_file(self.sketch, path)
+        except Exception as exc:
+            QMessageBox.warning(self.vp, "Import", f"Could not import: {exc}")
+            return
+        self.sketch.solve()
+        self.changed("Insert drawing")
+        self._select_new(new)
+        self.message(f"Inserted {len(new)} curves - drag or constrain them into place")
+
+    def export_dxf(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from ..sketch import ops
+        path, _ = QFileDialog.getSaveFileName(self.vp, "Export sketch as DXF", f"{self.feature.name}.dxf", "DXF (*.dxf)")
+        if not path:
+            return
+        try:
+            ops.write_dxf(self.sketch, path if path.endswith(".dxf") else path + ".dxf")
+            self.message(f"Exported {path}")
+        except OSError as exc:
+            QMessageBox.warning(self.vp, "Export", str(exc))
+
     def edit_dimension(self, cid, global_pos: QPoint | None = None):
         sk = self.sketch
         c = sk.constraints.get(cid)

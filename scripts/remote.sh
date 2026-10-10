@@ -34,7 +34,7 @@ for b in Xvfb x11vnc websockify; do command -v "$b" >/dev/null || need=1; done
 if [ -n "$need" ]; then
   echo "Installing xvfb, x11vnc, novnc ..."
   SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO=sudo
-  $SUDO apt-get update && $SUDO apt-get install -y xvfb x11vnc novnc websockify libgl1-mesa-dri
+  $SUDO apt-get update && $SUDO apt-get install -y xvfb x11vnc novnc websockify libgl1-mesa-dri fontconfig fonts-dejavu-core
 fi
 
 # Python to run the app: installed launcher, dev venv, or system python

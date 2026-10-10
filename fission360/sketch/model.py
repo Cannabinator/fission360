@@ -16,7 +16,7 @@ from . import solver as S
 
 ORIGIN_ID = 0
 
-CURVE_KINDS = ("line", "circle", "arc", "spline")
+CURVE_KINDS = ("line", "circle", "arc", "spline", "ellipse", "text")
 
 DIMENSION_KINDS = {"distance": "length", "hdistance": "length", "vdistance": "length",
                    "radius": "length", "diameter": "length", "angle": "angle"}
@@ -46,6 +46,12 @@ class Entity:
     construction: bool = False
     fixed: bool = False               # origin / projected reference geometry
     owner: int | None = None          # for points: curve that created them
+    text: str = ""                    # kind == text
+    height: float = 5.0               # text font height (mm)
+    font: str = "sans"
+    bold: bool = False
+    italic: bool = False
+    angle: float = 0.0                # text rotation (rad)
 
     def to_dict(self):
         d = {"id": self.id, "kind": self.kind}
@@ -55,8 +61,14 @@ class Entity:
                 d["owner"] = self.owner
         else:
             d["pts"] = list(self.pts)
-        if self.kind in ("circle", "arc"):
+        if self.kind in ("circle", "arc", "ellipse"):
             d["r"] = self.r
+        if self.kind == "text":
+            d.update(text=self.text, height=self.height, font=self.font, angle=self.angle)
+            if self.bold:
+                d["bold"] = True
+            if self.italic:
+                d["italic"] = True
         if self.construction:
             d["construction"] = True
         if self.fixed:
@@ -66,7 +78,9 @@ class Entity:
     @staticmethod
     def from_dict(d):
         return Entity(d["id"], d["kind"], list(d.get("pts", [])), d.get("x", 0.0), d.get("y", 0.0),
-                      d.get("r", 0.0), d.get("construction", False), d.get("fixed", False), d.get("owner"))
+                      d.get("r", 0.0), d.get("construction", False), d.get("fixed", False), d.get("owner"),
+                      d.get("text", ""), d.get("height", 5.0), d.get("font", "sans"), d.get("bold", False),
+                      d.get("italic", False), d.get("angle", 0.0))
 
 
 @dataclass
@@ -152,6 +166,23 @@ class Sketch:
         e = Entity(i, "spline", construction=construction)
         self.entities[i] = e
         e.pts = [self._pt(p, i) for p in pts]
+        return i
+
+    def add_ellipse(self, center, major_end, minor_r, construction=False) -> int:
+        """Ellipse given by centre, end of the major axis and minor radius."""
+        i = self._nid()
+        e = Entity(i, "ellipse", r=float(minor_r), construction=construction)
+        self.entities[i] = e
+        e.pts = [self._pt(center, i), self._pt(major_end, i)]
+        return i
+
+    def add_text(self, anchor, text, height=5.0, font="sans", bold=False, italic=False, angle=0.0,
+                 construction=False) -> int:
+        i = self._nid()
+        e = Entity(i, "text", construction=construction, text=text, height=float(height), font=font, bold=bold,
+                   italic=italic, angle=float(angle))
+        self.entities[i] = e
+        e.pts = [self._pt(anchor, i)]
         return i
 
     def add_constraint(self, kind, refs, param=None, data=None, driven=False, check=True) -> int:
@@ -450,6 +481,13 @@ class Sketch:
             a1 += 2 * math.pi
         return a0, a1
 
+    def polylines(self, e: Entity, seg_len: float = 1.0) -> list[np.ndarray]:
+        """Display polylines for a curve (text has one per glyph outline edge)."""
+        if e.kind == "text":
+            return text_outlines(self, e)
+        pl = self.polyline(e, seg_len)
+        return [pl] if len(pl) else []
+
     def polyline(self, e: Entity, seg_len: float = 1.0) -> np.ndarray:
         """Discretised curve for display (Nx2)."""
         if e.kind == "line":
@@ -467,6 +505,18 @@ class Sketch:
             return np.column_stack([c[0] + e.r * np.cos(t), c[1] + e.r * np.sin(t)])
         if e.kind == "spline":
             return catmull_rom(np.array([self.xy(p) for p in e.pts]))
+        if e.kind == "ellipse":
+            c, m = np.array(self.xy(e.pts[0])), np.array(self.xy(e.pts[1]))
+            a = float(np.linalg.norm(m - c))
+            if a < 1e-9:
+                return np.zeros((0, 2))
+            u = (m - c) / a
+            v = np.array([-u[1], u[0]])
+            t = np.linspace(0, 2 * math.pi, 129)
+            return c + np.outer(a * np.cos(t), u) + np.outer(e.r * np.sin(t), v)
+        if e.kind == "text":
+            pls = text_outlines(self, e)
+            return np.vstack(pls) if pls else np.zeros((0, 2))
         return np.zeros((0, 2))
 
     # ------------------------------------------------------------------ serialisation
@@ -492,6 +542,29 @@ class Sketch:
         s = Sketch.from_dict(self.to_dict())
         s.param_value = self.param_value
         return s
+
+
+_TEXT_OUTLINE_CACHE: dict = {}
+
+
+def text_outlines(sk, e: Entity) -> list[np.ndarray]:
+    """2D outline polylines of a text entity (cached per text/height/font)."""
+    from ..core import kernel as K
+    key = (e.text, round(e.height, 6), e.font, e.bold, e.italic)
+    base = _TEXT_OUTLINE_CACHE.get(key)
+    if base is None:
+        try:
+            shp = K.text_shape(e.text, e.height, e.font, e.bold, e.italic)
+            base = [K.edge_polyline(ed, max(e.height * 0.01, 0.01))[:, :2].astype(float) for ed in K.edges(shp)]
+        except Exception:
+            base = []
+        if len(_TEXT_OUTLINE_CACHE) > 128:
+            _TEXT_OUTLINE_CACHE.clear()
+        _TEXT_OUTLINE_CACHE[key] = base
+    a = np.array(sk.xy(e.pts[0]))
+    ca, sa = math.cos(e.angle), math.sin(e.angle)
+    R = np.array([[ca, -sa], [sa, ca]])
+    return [pl @ R.T + a for pl in base]
 
 
 def catmull_rom(P: np.ndarray, samples: int = 16) -> np.ndarray:

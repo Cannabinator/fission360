@@ -13,6 +13,7 @@ import numpy as np
 
 from . import kernel as K
 from . import references as R
+from . import threads as TH
 
 OPERATIONS = ["new", "join", "cut", "intersect"]
 OP_LABELS = {"new": "New Body", "join": "Join", "cut": "Cut", "intersect": "Intersect"}
@@ -61,18 +62,35 @@ FEATURE_TYPES: dict[str, dict] = {
     ]},
     "hole": {"label": "Hole", "icon": "hole", "key": "H", "fields": [
         F("points", "Center Points", "points", tip="Select sketch points"),
-        F("hole_type", "Hole Type", "choice", "simple", ["simple", "counterbore", "countersink"]),
-        F("diameter", "Diameter", "length", "6 mm"),
+        F("hole_type", "Hole Type", "choice", "simple", ["simple", "counterbore", "countersink", "tapped"]),
+        F("thread", "Thread", "choice", "M6x1", list(TH.THREADS), show=lambda d: d.get("hole_type") == "tapped"),
+        F("diameter", "Diameter", "length", "6 mm", show=lambda d: d.get("hole_type") != "tapped"),
         F("depth", "Depth", "length", "10 mm"),
         F("cbore_diameter", "Counterbore Diameter", "length", "10 mm",
           show=lambda d: d.get("hole_type") in ("counterbore", "countersink")),
         F("cbore_depth", "Counterbore Depth", "length", "3 mm", show=lambda d: d.get("hole_type") == "counterbore"),
         F("tip_angle", "Drill Point Angle", "angle", "118 deg"),
     ]},
+    "rib": {"label": "Rib / Web", "icon": "rib", "fields": [
+        F("path", "Profile Curves", "path", tip="Select open or closed sketch curves; they are thickened into a wall"),
+        F("thickness", "Thickness", "length", "2 mm"),
+        F("height", "Height", "length", "10 mm", tip="Extrusion perpendicular to the sketch plane"),
+        F("direction", "Direction", "choice", "one_side", ["one_side", "reverse", "symmetric"]),
+        F("operation", "Operation", "choice", "join", ["join", "new", "cut"]),
+    ]},
+    "thread": {"label": "Thread", "icon": "thread", "fields": [
+        F("faces", "Cylindrical Faces", "faces", tip="Select hole or shaft faces for a cosmetic thread"),
+        F("designation", "Thread", "choice", "M6x1", list(TH.THREADS)),
+        F("full_length", "Full Length", "bool", True),
+        F("length", "Length", "length", "10 mm", show=lambda d: not d.get("full_length", True)),
+    ]},
     "fillet": {"label": "Fillet", "icon": "fillet", "key": "F", "fields": [
         F("edges", "Edges/Faces", "edges", tip="Pick edges, or a face to round all its edges"),
+        F("fillet_type", "Radius Type", "choice", "constant", ["constant", "variable"]),
         F("radius", "Radius", "length", "2 mm"),
-        F("tangent_chain", "Tangent Chain", "bool", True),
+        F("radius_end", "End Radius", "length", "4 mm", show=lambda d: d.get("fillet_type") == "variable",
+          tip="Radius at the far end of each selected edge (linear blend)"),
+        F("tangent_chain", "Tangent Chain", "bool", True, show=lambda d: d.get("fillet_type") != "variable"),
     ]},
     "chamfer": {"label": "Chamfer", "icon": "chamfer", "fields": [
         F("edges", "Edges/Faces", "edges", tip="Pick edges, or a face to chamfer all its edges"),
@@ -406,9 +424,14 @@ def _exec_hole(doc, f, state):
     pts = f.data.get("points") or []
     if not pts:
         raise K.KernelError("select hole center points")
-    dia = doc.val(f, "diameter")
-    depth = doc.val(f, "depth")
     htype = f.data.get("hole_type", "simple")
+    depth = doc.val(f, "depth")
+    thread = None
+    if htype == "tapped":
+        thread = TH.info(f.data.get("thread", "M6x1"))
+        dia = thread["tap_drill"]  # drilled to the tap-drill size, thread is cosmetic
+    else:
+        dia = doc.val(f, "diameter")
     tip = math.degrees(doc.val(f, "tip_angle", math.radians(118)))
     tools = []
     for ref in pts:
@@ -429,6 +452,10 @@ def _exec_hole(doc, f, state):
         else:
             tool = K.hole(p, n, dia, depth, 0, 0, tip)
         tools.append(tool)
+        if thread:
+            state.annotations.append({"feature": f.id, "text": TH.label(thread["designation"], depth, True),
+                                      "point": (p + n * depth / 2).tolist(), "dir": n.tolist(),
+                                      "radius": thread["major"] / 2, "length": depth})
     apply_operation(doc, f, state, _fuse_all(tools), "cut")
 
 
@@ -459,8 +486,13 @@ def _exec_fillet(doc, f, state):
     r = doc.val(f, "radius")
     if r <= 0:
         raise K.KernelError("radius must be positive")
-    for bid, es in _edges(state, refs, f.data.get("tangent_chain", True)).items():
-        state.set_shape(bid, K.fillet(state.bodies[bid].shape, es, r))
+    variable = f.data.get("fillet_type") == "variable"
+    r2 = doc.val(f, "radius_end") if variable else None
+    if variable and r2 <= 0:
+        raise K.KernelError("end radius must be positive")
+    chain = f.data.get("tangent_chain", True) and not variable
+    for bid, es in _edges(state, refs, chain).items():
+        state.set_shape(bid, K.fillet(state.bodies[bid].shape, es, r, r2))
 
 
 def _exec_chamfer(doc, f, state):
@@ -692,6 +724,97 @@ def _exec_plane_angle(doc, f, state):
 
 def _exec_axis_construct(doc, f, state):
     state.axes[f.id] = R.resolve_axis(state, f.data.get("axis", "Z"))
+
+
+def _exec_rib(doc, f, state):
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepOffsetAPI import BRepOffsetAPI_MakeOffset
+    from OCP.GeomAbs import GeomAbs_Arc
+    path = f.data.get("path")
+    if not path:
+        raise K.KernelError("select sketch curves for the rib")
+    sk = state.sketches.get(path["sketch"])
+    if sk is None:
+        raise R.ReferenceError_("referenced sketch is missing")
+    t, h = doc.val(f, "thickness"), doc.val(f, "height")
+    if t <= 0 or abs(h) < 1e-9:
+        raise K.KernelError("thickness and height must be positive")
+    wire = K.wire_from_edges(R.resolve_sketch_curves(state, path))
+    pln = sk.frame.pln()
+
+    def band(d):
+        mk = BRepOffsetAPI_MakeOffset(wire, GeomAbs_Arc, False)
+        mk.Perform(float(d))
+        if not mk.IsDone():
+            raise K.KernelError("could not thicken the curves (distance too large for this shape)")
+        w = K.subshapes(mk.Shape(), K.TopAbs_WIRE)[0]
+        return BRepBuilderAPI_MakeFace(pln, w, True).Face()
+
+    if BRep_Tool.IsClosed_s(wire):
+        outer, inner = band(t / 2), band(-t / 2)
+        tool = K.cut(K.prism(outer, sk.frame.normal * h), K.prism(inner, sk.frame.normal * h))
+    else:
+        try:
+            tool = K.prism(band(t / 2), sk.frame.normal * h)
+        except K.KernelError:
+            tool = _straight_ribs(R.resolve_sketch_curves(state, path), sk.frame, t, h)
+    d = f.data.get("direction", "one_side")
+    if d == "reverse":
+        tool = K.translate(tool, -sk.frame.normal * h)
+    elif d == "symmetric":
+        tool = K.translate(tool, -sk.frame.normal * h / 2)
+    apply_operation(doc, f, state, tool, f.data.get("operation", "join"))
+
+
+def _straight_ribs(edges, frame, t, h):
+    """Thin walls for straight sketch segments (OCCT cannot offset a lone line):
+    one slab per segment, with round joints so corners stay filled."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
+    tools = []
+    n = frame.normal
+    for e in edges:
+        info = K.edge_info(e)
+        if info["type"] != "line":
+            raise K.KernelError("could not thicken the curves - use straight segments or a closed shape")
+        a, b = np.array(info["start"]), np.array(info["end"])
+        side = np.cross(n, (b - a) / np.linalg.norm(b - a)) * t / 2
+        poly = BRepBuilderAPI_MakePolygon()
+        for q in (a + side, b + side, b - side, a - side):
+            poly.Add(K.P(q))
+        poly.Close()
+        tools.append(K.prism(BRepBuilderAPI_MakeFace(poly.Wire(), True).Face(), n * h))
+        if len(edges) > 1:
+            for q in (a, b):
+                tools.append(K.cylinder(K.Frame(q, frame.xdir, n), 0, 0, t / 2, h))
+    return _fuse_all(tools)
+
+
+def _exec_thread(doc, f, state):
+    refs = f.data.get("faces") or []
+    if not refs:
+        raise K.KernelError("select cylindrical faces")
+    th = TH.info(f.data.get("designation", "M6x1"))
+    for ref in refs:
+        bid, face = R.resolve_face(state, ref)
+        fi = K.face_info(face)
+        if fi["type"] != "cylinder":
+            raise K.KernelError("threads can only be applied to cylindrical faces")
+        axis = np.array(fi["axis_dir"])
+        origin = np.array(fi["axis_origin"])
+        pt = np.array(fi["point"])
+        internal = float(np.dot(np.array(fi["normal"]), origin + axis * np.dot(pt - origin, axis) - pt)) > 0
+        dia = 2 * fi["radius"]
+        expect = th["tap_drill"] if internal else th["major"]
+        if abs(dia - expect) > 0.12 * expect:
+            f.warning = (f"Face diameter {dia:.3g} mm does not match {th['designation']} "
+                         f"({'tap drill' if internal else 'major diameter'} {expect:.3g} mm)")
+        lo, hi = K.bbox(face)
+        flen = float(abs(np.dot(hi - lo, np.abs(axis))))
+        length = flen if f.data.get("full_length", True) else min(doc.val(f, "length"), flen)
+        state.annotations.append({"feature": f.id, "text": TH.label(th["designation"], length, internal),
+                                  "point": fi["center"], "dir": axis.tolist(), "radius": th["major"] / 2,
+                                  "length": length})
 
 
 def _exec_import(doc, f, state):

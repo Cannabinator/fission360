@@ -8,7 +8,7 @@ VENV="$PREFIX/share/fission360/venv"
 
 if command -v apt-get >/dev/null 2>&1 && [ "${SKIP_APT:-0}" != "1" ]; then
   PKGS="python3-venv python3-pip libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
-libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libfontconfig1"
+libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libfontconfig1 fontconfig fonts-dejavu-core"
   MISSING=$(for p in $PKGS; do dpkg -s "$p" >/dev/null 2>&1 || echo "$p"; done)
   if [ -n "$MISSING" ]; then
     echo "Installing system packages: $MISSING"

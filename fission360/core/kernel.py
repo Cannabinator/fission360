@@ -230,12 +230,17 @@ def vertex_point(v) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def sketch_edges(sketch, frame: Frame, include_construction=False) -> list[tuple[int, TopoDS_Shape]]:
-    """Build 3D edges for the sketch curves.  Returns (entity id, edge)."""
+    """Build 3D edges for the sketch curves.  Returns (entity id, edge).
+    Text contributes the edges of its glyph outlines."""
     out = []
     for e in sketch.curves(include_construction):
         try:
+            if e.kind == "text":
+                shp = text_in_frame(e.text, e.height, frame, sketch.xy(e.pts[0]), e.angle, e.font, e.bold, e.italic)
+                out.extend((e.id, ed) for ed in edges(shp))
+                continue
             edge = curve_edge(sketch, e, frame)
-        except Exception:  # degenerate geometry (zero-length line, etc.)
+        except Exception:  # degenerate geometry (zero-length line, empty text ...)
             continue
         if edge is not None:
             out.append((e.id, edge))
@@ -260,6 +265,20 @@ def curve_edge(sketch, e, frame: Frame):
         a0, a1 = sketch.arc_angles(e)
         arc = GC_MakeArcOfCircle(circ, a0, a1, True).Value()
         return BRepBuilderAPI_MakeEdge(arc).Edge()
+    if e.kind == "ellipse":
+        c, m = sketch.xy(e.pts[0]), sketch.xy(e.pts[1])
+        a = math.dist(c, m)
+        b = e.r
+        if a < 1e-7 or b < 1e-7:
+            return None
+        from OCP.gp import gp_Elips
+        major = np.array([m[0] - c[0], m[1] - c[1]]) / a
+        if b > a:  # OCCT needs major >= minor: swap the axes
+            a, b = b, a
+            major = np.array([-major[1], major[0]])
+        xd = frame.to_world(np.array(c) + major) - frame.to_world(c)
+        ell = gp_Elips(gp_Ax2(W(c), D(frame.normal), D(xd)), a, b)
+        return BRepBuilderAPI_MakeEdge(ell).Edge()
     if e.kind == "spline":
         pts = [sketch.xy(p) for p in e.pts]
         if len(pts) < 2:
@@ -476,7 +495,8 @@ def face_info(face) -> dict:
         n = n / np.linalg.norm(n)
     kind = {GeomAbs_Plane: "plane", GeomAbs_Cylinder: "cylinder", GeomAbs_Cone: "cone",
             GeomAbs_Sphere: "sphere", GeomAbs_Torus: "torus", GeomAbs_BSplineSurface: "bspline"}.get(t, "other")
-    info = {"type": kind, "center": centroid(face).tolist(), "normal": n.tolist(), "area": area(face)}
+    info = {"type": kind, "center": centroid(face).tolist(), "normal": n.tolist(), "area": area(face),
+            "point": np3(pnt).tolist()}
     if kind == "plane":
         pl = s.Plane()
         info["normal"] = np3(pl.Axis().Direction()).tolist()
@@ -545,16 +565,57 @@ def unify(shape):
         return shape
 
 
-def _bool(cls, a, b, what):
+def heal(shape):
+    """Run OCCT shape healing; returns the original on failure."""
+    try:
+        fx = ShapeFix_Shape(shape)
+        fx.Perform()
+        out = fx.Shape()
+        return out if not out.IsNull() else shape
+    except Exception:
+        return shape
+
+
+def _bool_once(cls, a, b, fuzzy):
     op = cls()
     op.SetArguments(to_list([a]))
     op.SetTools(to_list(b if isinstance(b, (list, tuple)) else [b]))
-    op.SetFuzzyValue(FUZZY)
+    op.SetFuzzyValue(fuzzy)
     op.SetRunParallel(True)
     op.SetNonDestructive(True)
     op.Build()
-    _check(op, what)
-    return unify(op.Shape())
+    if hasattr(op, "HasErrors") and op.HasErrors():
+        return None
+    if hasattr(op, "IsDone") and not op.IsDone():
+        return None
+    return op.Shape()
+
+
+def _bool(cls, a, b, what):
+    """Boolean with an escalating retry strategy: normal fuzzy value, a
+    looser one, then healing of the inputs.  Invalid results are healed."""
+    tries = [(a, b, FUZZY), (a, b, FUZZY * 100), (a, b, FUZZY * 2000)]
+    res = None
+    for ia, ib, fz in tries:
+        try:
+            res = _bool_once(cls, ia, ib, fz)
+        except Exception:
+            res = None
+        if res is not None and not res.IsNull():
+            break
+    if res is None or res.IsNull():
+        hb = [heal(x) for x in (b if isinstance(b, (list, tuple)) else [b])]
+        try:
+            res = _bool_once(cls, heal(a), hb, FUZZY * 100)
+        except Exception:
+            res = None
+    if res is None or res.IsNull():
+        raise KernelError(f"{what} failed: the shapes could not be combined. They may touch only along a "
+                          "tangent face or edge - try moving one body by 0.01 mm or overlapping them more")
+    out = unify(res)
+    if not is_valid(out):
+        out = heal(out)
+    return out
 
 
 def fuse(a, b):
@@ -718,27 +779,86 @@ def tangent_chain(shape, edge_list, tol_deg=1.0):
     return out
 
 
-def fillet(shape, edge_list, radius):
+def _max_feasible(try_fn, value, lo_frac=1e-3, steps=8):
+    """Largest value <= ``value`` for which ``try_fn(v)`` succeeds (bisection),
+    or None if even a tiny value fails."""
+    lo, hi = value * lo_frac, value
+    try:
+        try_fn(lo)
+    except Exception:
+        return None
+    for _ in range(steps):
+        mid = (lo + hi) / 2
+        try:
+            try_fn(mid)
+            lo = mid
+        except Exception:
+            hi = mid
+    return lo
+
+
+def _valid_or_raise(res, what):
+    if res is None or res.IsNull():
+        raise KernelError(f"{what} produced no geometry")
+    if not is_valid(res):
+        res = heal(res)
+        if not is_valid(res):
+            raise KernelError(f"{what} produced an invalid solid")
+    return res
+
+
+def _fillet_raw(shape, edge_list, radius, radius2=None):
     mk = BRepFilletAPI_MakeFillet(shape)
     for e in edge_list:
-        mk.Add(float(radius), e)
+        if radius2 is None or abs(radius2 - radius) < 1e-12:
+            mk.Add(float(radius), e)
+        else:
+            mk.Add(float(radius), float(radius2), e)
     mk.Build()
     _check(mk, "Fillet")
-    return mk.Shape()
+    return _valid_or_raise(mk.Shape(), "Fillet")
 
 
-def chamfer(shape, edge_list, dist, dist2=None):
+def fillet(shape, edge_list, radius, radius2=None):
+    """Constant or linearly varying (radius -> radius2) fillet.  On failure the
+    error names the largest radius that does work."""
+    try:
+        return _fillet_raw(shape, edge_list, radius, radius2)
+    except Exception:
+        big = max(radius, radius2 or 0)
+        ok = _max_feasible(lambda v: _fillet_raw(shape, edge_list, v * radius / big,
+                                                 None if radius2 is None else v * radius2 / big), big)
+        if ok:
+            raise KernelError(f"Fillet radius too large for the selected edges - the largest radius that works "
+                              f"is about {ok:.3g} mm") from None
+        raise KernelError("These edges cannot be filleted (adjacent faces too small or tangent, or the edge "
+                          "chain is too complex) - try fewer edges or a smaller radius") from None
+
+
+def _chamfer_raw(shape, edge_list, dist, dist2=None):
     mk = BRepFilletAPI_MakeChamfer(shape)
     for e in edge_list:
         if dist2 is None:
             mk.Add(float(dist), e)
         else:
             # two-distance chamfer needs a reference face adjacent to the edge
-            f = _adjacent_face(shape, e)
-            mk.Add(float(dist), float(dist2), e, f)
+            mk.Add(float(dist), float(dist2), e, _adjacent_face(shape, e))
     mk.Build()
     _check(mk, "Chamfer")
-    return mk.Shape()
+    return _valid_or_raise(mk.Shape(), "Chamfer")
+
+
+def chamfer(shape, edge_list, dist, dist2=None):
+    try:
+        return _chamfer_raw(shape, edge_list, dist, dist2)
+    except Exception:
+        big = max(dist, dist2 or 0)
+        ok = _max_feasible(lambda v: _chamfer_raw(shape, edge_list, v * dist / big,
+                                                  None if dist2 is None else v * dist2 / big), big)
+        if ok:
+            raise KernelError(f"Chamfer distance too large - the largest distance that works is about "
+                              f"{ok:.3g} mm") from None
+        raise KernelError("These edges cannot be chamfered - try fewer edges or a smaller distance") from None
 
 
 def _adjacent_face(shape, edge):
@@ -749,12 +869,36 @@ def _adjacent_face(shape, edge):
     raise KernelError("edge has no adjacent face")
 
 
-def shell(shape, open_faces, thickness, inside=True):
+def _shell_raw(shape, open_faces, thickness, inside, join):
+    from OCP.GeomAbs import GeomAbs_Arc, GeomAbs_Intersection
     mk = BRepOffsetAPI_MakeThickSolid()
-    mk.MakeThickSolidByJoin(shape, to_list(open_faces), -float(thickness) if inside else float(thickness), 1e-4)
+    mk.MakeThickSolidByJoin(shape, to_list(open_faces), -float(thickness) if inside else float(thickness), 1e-4,
+                            Join=GeomAbs_Arc if join == "arc" else GeomAbs_Intersection)
     mk.Build()
     _check(mk, "Shell")
-    return mk.Shape()
+    res = _valid_or_raise(mk.Shape(), "Shell")
+    if inside:  # a wall that is too thick leaves no cavity and OCCT hands the solid back unchanged
+        v0 = mass_properties(shape)["volume_mm3"]
+        if mass_properties(res)["volume_mm3"] > v0 * (1 - 1e-6):
+            raise KernelError("Shell left no cavity")
+    return res
+
+
+def shell(shape, open_faces, thickness, inside=True):
+    errs = []
+    for join in ("arc", "intersection"):
+        try:
+            return _shell_raw(shape, open_faces, thickness, inside, join)
+        except Exception as exc:
+            errs.append(exc)
+            if "no cavity" in str(exc):
+                break  # the wall is simply too thick: another join type will not help
+    ok = _max_feasible(lambda v: _shell_raw(shape, open_faces, v, inside, "arc"), thickness)
+    if ok:
+        raise KernelError(f"Wall thickness too large - the largest thickness that works is about "
+                          f"{ok:.3g} mm") from None
+    raise KernelError("Shell failed - the body has features (small faces, sharp or tangent corners) that cannot be "
+                      "offset by this thickness; try a thinner wall or remove small fillets first") from None
 
 
 def transform(shape, matrix: np.ndarray, copy=True):
@@ -1090,3 +1234,130 @@ def face_normal_at(face, point) -> np.ndarray:
     props.Normal(u, v, pnt, nrm)
     n = np3(nrm)
     return n / (np.linalg.norm(n) or 1)
+
+
+# ---------------------------------------------------------------------------
+# Text (sketch text -> glyph outline faces)
+# ---------------------------------------------------------------------------
+
+_FONT_CACHE: dict = {}
+_TEXT_CACHE: dict = {}
+
+
+def list_fonts() -> list[str]:
+    """Installed font family names (via fontconfig when available)."""
+    import shutil
+    import subprocess
+    names = set()
+    if shutil.which("fc-list"):
+        try:
+            out = subprocess.run(["fc-list", ":", "family"], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                names.add(line.split(",")[0].strip())
+        except Exception:
+            pass
+    return sorted(n for n in names if n) or ["DejaVu Sans"]
+
+
+def find_font_file(family: str = "sans", bold: bool = False, italic: bool = False) -> str:
+    import shutil
+    import subprocess
+    key = (family, bold, italic)
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
+    path = None
+    if shutil.which("fc-match"):
+        pattern = f"{family}:{'bold' if bold else 'regular'}{':italic' if italic else ''}"
+        try:
+            path = subprocess.run(["fc-match", "-f", "%{file}", pattern], capture_output=True, text=True,
+                                  timeout=10).stdout.strip()
+        except Exception:
+            path = None
+    if not path or not os.path.exists(path):
+        for cand in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                     "/usr/share/fonts/TTF/DejaVuSans.ttf"):
+            if os.path.exists(cand):
+                path = cand
+                break
+    if not path:
+        raise KernelError("no usable font found - install fonts (e.g. fonts-dejavu-core)")
+    _FONT_CACHE[key] = path
+    return path
+
+
+def text_shape(text: str, size: float, family: str = "sans", bold: bool = False, italic: bool = False):
+    """Glyph faces of ``text`` in the XY plane, baseline-left at the origin.
+
+    ``size`` is the font height in mm.  Letters with holes (O, A, 8) become faces
+    with inner wires, so extruding them gives correct engraving/embossing.
+    """
+    from OCP.NCollection import NCollection_String
+    from OCP.StdPrs import StdPrs_BRepFont, StdPrs_BRepTextBuilder
+    key = (text, round(size, 6), family, bold, italic)
+    if key in _TEXT_CACHE:
+        return _TEXT_CACHE[key]
+    if not text.strip():
+        raise KernelError("text is empty")
+    font = StdPrs_BRepFont()
+    if not font.Init(NCollection_String(find_font_file(family, bold, italic)), float(size), 0):
+        raise KernelError(f"cannot load font '{family}'")
+    shp = StdPrs_BRepTextBuilder().Perform(font, NCollection_String(text),
+                                           gp_Ax3(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0)))
+    if len(_TEXT_CACHE) > 64:
+        _TEXT_CACHE.clear()
+    _TEXT_CACHE[key] = shp
+    return shp
+
+
+def text_in_frame(text, size, frame: "Frame", anchor_uv, angle=0.0, family="sans", bold=False, italic=False):
+    """Text faces placed in a sketch plane at ``anchor_uv`` rotated by ``angle`` (rad)."""
+    base = text_shape(text, size, family, bold, italic)
+    t = gp_Trsf()
+    t.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), float(angle))
+    shp = BRepBuilderAPI_Transform(base, t, True).Shape()
+    t2 = gp_Trsf()
+    t2.SetTranslation(gp_Vec(float(anchor_uv[0]), float(anchor_uv[1]), 0.0))
+    shp = BRepBuilderAPI_Transform(shp, t2, True).Shape()
+    return transform(shp, frame.matrix())
+
+
+# ---------------------------------------------------------------------------
+# 3MF export (slicer friendly: welded vertices, millimetres)
+# ---------------------------------------------------------------------------
+
+def export_3mf(named_shapes, path: str):
+    import zipfile
+    from xml.sax.saxutils import escape
+    objs = []
+    for name, shape in named_shapes:
+        m = tessellate(shape, lin_defl=None, ang_defl=0.2)
+        if len(m.indices) == 0:
+            continue
+        key = np.round(m.positions.astype(np.float64), 5)
+        uniq, inv = np.unique(key, axis=0, return_inverse=True)
+        tris = inv[m.indices.astype(np.int64)]
+        keep = (tris[:, 0] != tris[:, 1]) & (tris[:, 1] != tris[:, 2]) & (tris[:, 0] != tris[:, 2])
+        objs.append((name, uniq, tris[keep]))
+    if not objs:
+        raise KernelError("nothing to export")
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
+             '<metadata name="Application">Fission360</metadata><resources>']
+    for i, (name, v, t) in enumerate(objs, 1):
+        parts.append(f'<object id="{i}" type="model" name="{escape(str(name))}"><mesh><vertices>')
+        parts.extend(f'<vertex x="{a:.5f}" y="{b:.5f}" z="{c:.5f}"/>' for a, b, c in v)
+        parts.append('</vertices><triangles>')
+        parts.extend(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in t)
+        parts.append('</triangles></mesh></object>')
+    parts.append('</resources><build>')
+    parts.extend(f'<item objectid="{i}"/>' for i in range(1, len(objs) + 1))
+    parts.append('</build></model>')
+    ct = ('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+          '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", ct)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("3D/3dmodel.model", "".join(parts))

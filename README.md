@@ -68,6 +68,15 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 - ViewCube: **26 views** (faces, edges, corners) and **drag the cube to orbit**; **Look At** a selected face; **F6 fits the selection**.
 - Hovering a timeline feature highlights the bodies it created or changed; the status bar names what's under the cursor; inline rename (F2) in the browser; sketch palette toggles for dimensions, constraints and profiles; expression-driven dimensions show as `fx: …`.
 
+**Roadmap implementation (from the competitive analysis in `reports/`)**
+- *Robustness layer*: booleans retry with looser tolerances and shape healing; Fillet, Chamfer and Shell **explain failures and name the largest value that works** ("largest radius that works is about 14.9 mm"); features that lose a face/edge/profile are flagged "reference lost" in the timeline, and editing them lists what must be re-selected.
+- *Diffable files*: `.f3x` is plain sorted, indented JSON (Git-friendly, atomic writes; gzip still loads); **named versions** with a feature-level diff and one-click restore (File > Version History).
+- *Sketch*: **text** (any installed font; letter counters become real holes), **ellipse**, **offset**, **mirror** (keeps symmetry constraints), **rectangular & circular patterns**, **extend**, **insert DXF / SVG** (lines, arcs, circles, polylines, splines, paths, units and transforms) and **export DXF**.
+- *Features*: **variable-radius fillet**, **Rib / Web**, **cosmetic threads** (ISO metric + UNC/UNF tables, internal/external detection, label in the canvas) and **tapped holes** (drilled to tap-drill size). Text + Extrude gives emboss/engrave automatically.
+- *Export*: **3MF** for slicers (welded mesh, millimetres).
+- *Selection*: **Select Other** (Tools menu / marking menu) lists every face along the ray under the cursor, including hidden ones.
+- *Scripting*: `fission360.api` drives the same document the GUI edits (parameters, sketches, features, geometry selectors); run with `fission360 --run script.py` (headless, CI friendly) or Tools > Run Script. See `examples/bracket.py`.
+
 **Sketching**
 - Line (chained), 2-point & center rectangle, circle, 3-point & center arc, polygon, slot, spline, point.
 - Snapping to points/curves, horizontal/vertical inference, optional grid snap; auto-coincident constraints.
@@ -119,8 +128,5 @@ fission360/
 
 ## Scope & roadmap
 
-Fission360 covers Fusion 360's core part-design workflow. Not (yet) implemented: assemblies/components & joints, surface/T-spline/mesh workspaces, sheet metal, drawings, CAM, simulation, rendering, cloud collaboration, and history-based (rather than signature-based) topological naming. Next steps: components & joints, 2D drawings from models, sketch offset/mirror/pattern, text, threads, full-history naming via OCCT's `BRepTools_History`.
+Implemented from the roadmap: Phase 0 (robustness, diffable format) and Phase 1 (sketch tools, DXF/SVG, 3MF, threads, rib, variable fillet) plus from Phase 2 the scripting API and file versioning. **Not yet implemented**: components/joints and assembly STEP, 2D drawings, full-round fillet, modeled (helical) threads, canvas images, thicken/stitch/surface tools, direct-edit face tools, sheet metal, CAM, simulation, rendering, T-splines. See `reports/Fission360 competitive gap analysis.md` for the full prioritised plan.
 
-## License
-
-LGPL-2.1-or-later (compatible with OpenCASCADE's license).

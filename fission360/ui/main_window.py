@@ -26,7 +26,8 @@ from .viewport import Pick, Viewport
 
 FILE_FILTER = "Fission360 Design (*.f3x);;All files (*)"
 IMPORT_FILTER = "CAD files (*.step *.stp *.iges *.igs *.stl *.brep);;All files (*)"
-EXPORT_FORMATS = "STEP (*.step);;IGES (*.iges);;STL mesh (*.stl);;OBJ mesh (*.obj);;OCC BREP (*.brep)"
+EXPORT_FORMATS = ("STEP (*.step);;IGES (*.iges);;3MF for slicers (*.3mf);;STL mesh (*.stl);;OBJ mesh (*.obj);;"
+                  "OCC BREP (*.brep)")
 
 
 class Command:
@@ -259,7 +260,9 @@ class MainWindow(QMainWindow):
             if ftype in ("sketch", "import"):
                 continue
             cs.append(C(ftype, spec["label"], spec["icon"], lambda t=ftype: f(t), spec.get("key", ""), "solid"))
-        tools = [("line", "Line", "line", "L"), ("rect", "2-Point Rectangle", "rect", "R"),
+        tools = [("ellipse", "Ellipse", "ellipse", ""), ("text", "Text", "text", ""),
+                 ("extend", "Extend", "extend", "E"),
+                 ("line", "Line", "line", "L"), ("rect", "2-Point Rectangle", "rect", "R"),
                  ("rect_center", "Center Rectangle", "rect_center", ""), ("circle", "Center Circle", "circle", "C"),
                  ("arc", "3-Point Arc", "arc", "A"), ("arc_center", "Center Point Arc", "arc_center", ""),
                  ("polygon", "Polygon", "polygon", ""), ("slot", "Slot", "slot", ""), ("spline", "Spline", "spline", ""),
@@ -268,6 +271,23 @@ class MainWindow(QMainWindow):
                  ("project", "Project", "project", "P")]
         for key, label, ico, sc in tools:
             cs.append(C("sk_" + key, label, ico, lambda k=key: sk(k), sc, "sketch"))
+        ses = lambda name: (lambda: getattr(self.session, name)() if self.session else None)  # noqa: E731
+        cs += [
+            C("sk_offset", "Offset", "offset", ses("offset"), "O", "sketch", "Offset the selected curves"),
+            C("sk_mirror", "Mirror", "mirror_sketch", ses("mirror"), "", "sketch",
+              "Select curves, then the mirror line last"),
+            C("sk_pattern_rect", "Rectangular Pattern", "pattern_rect", ses("pattern_rect"), "", "sketch"),
+            C("sk_pattern_circ", "Circular Pattern", "pattern_circ", ses("pattern_circ"), "", "sketch"),
+            C("sk_import_2d", "Insert DXF / SVG", "import2d", ses("import_2d"), "", "sketch",
+              "Insert lines, arcs, circles and paths from a DXF or SVG file"),
+            C("sk_export_dxf", "Export DXF", "dxf", ses("export_dxf"), "", "sketch"),
+            C("versions", "Version History", "save", self.show_versions, "", "any",
+              "Save, compare and restore named versions"),
+            C("run_script", "Run Script...", "parameters", self.run_script, "", "any",
+              "Run a Python script against the open design"),
+            C("select_other", "Select Other", "search", self.select_other, "", "solid",
+              "Choose between overlapping faces under the cursor"),
+        ]
         for kind in ("coincident", "horizontal", "vertical", "parallel", "perpendicular", "tangent", "equal",
                      "concentric", "midpoint", "collinear", "symmetric", "fix"):
             label = {"fix": "Fix/Unfix", "symmetric": "Symmetry"}.get(kind, kind.title())
@@ -278,10 +298,10 @@ class MainWindow(QMainWindow):
 
     def _build_ribbon(self):
         self.ribbon.add_tab("SOLID", [
-            ("CREATE", ["create_sketch", "extrude", "revolve", "sweep", "loft", "hole",
+            ("CREATE", ["create_sketch", "extrude", "revolve", "sweep", "loft", "hole", "rib",
                         ("menu", "Primitives", "box", ["box", "cylinder", "sphere", "torus", "coil"]),
                         ("menu", "Pattern", "pattern_rect", ["pattern_rect", "pattern_circ"]), "mirror"]),
-            ("MODIFY", ["fillet", "chamfer", "shell", "draft", "combine", "move",
+            ("MODIFY", ["fillet", "chamfer", "shell", "draft", "thread", "combine", "move",
                         ("menu", "More", "scale", ["scale", "split_body", "remove"]), "parameters"]),
             ("CONSTRUCT", [("menu", "Plane", "plane", ["plane_offset", "plane_angle"]), "axis_construct"]),
             ("INSPECT", ["measure", "section", "properties", "interference"]),
@@ -290,8 +310,11 @@ class MainWindow(QMainWindow):
         self.ribbon.add_tab("SKETCH", [
             ("CREATE", ["sk_line", ("menu", "Rectangle", "rect", ["sk_rect", "sk_rect_center"]),
                         "sk_circle", ("menu", "Arc", "arc", ["sk_arc", "sk_arc_center"]),
-                        "sk_polygon", "sk_slot", "sk_spline", "sk_point", "sk_project"]),
-            ("MODIFY", ["sk_sketch_fillet", "sk_trim", "construction"]),
+                        "sk_ellipse", "sk_polygon", "sk_slot", "sk_spline", "sk_text", "sk_point", "sk_project"]),
+            ("MODIFY", ["sk_offset", "sk_mirror", ("menu", "Pattern", "pattern_rect",
+                                                   ["sk_pattern_rect", "sk_pattern_circ"]),
+                        "sk_sketch_fillet", "sk_trim", "sk_extend", "construction"]),
+            ("INSERT", ["sk_import_2d", "sk_export_dxf"]),
             ("CONSTRAINTS", ["sk_dimension", "c_coincident", "c_horizontal", "c_vertical", "c_parallel",
                              "c_perpendicular", "c_tangent", "c_equal",
                              ("menu", "More", "c_concentric", ["c_concentric", "c_midpoint", "c_collinear",
@@ -408,6 +431,8 @@ class MainWindow(QMainWindow):
         self.recent_menu = fm.addMenu("Open Recent")
         self._refresh_recent()
         fm.addSeparator()
+        self._menu_action(fm, "versions")
+        fm.addSeparator()
         self._menu_action(fm, "import")
         self._menu_action(fm, "export")
         fm.addSeparator()
@@ -439,6 +464,9 @@ class MainWindow(QMainWindow):
         im = mb.addMenu("&Inspect")
         for k in ("measure", "section", "properties", "interference"):
             self._menu_action(im, k)
+        tm = mb.addMenu("&Tools")
+        self._menu_action(tm, "run_script")
+        self._menu_action(tm, "select_other")
         hm = mb.addMenu("&Help")
         hm.addAction("Keyboard && Mouse Shortcuts", self.show_shortcuts)
         hm.addAction("About Fission360", self.about)
@@ -902,7 +930,7 @@ class MainWindow(QMainWindow):
             items = [(f"Repeat {rep.label}", rep.icon, lambda k=rep.key: self.run(k)) if rep else item("search"),
                      item("press_pull"), item("hole"), item("move"), item("delete"), item("fillet"),
                      item("create_sketch"), item("undo")]
-            over = [item(k) for k in ("redo", "look_at", "fit", "chamfer", "shell", "measure", "section", "properties", "appearance",
+            over = [item(k) for k in ("redo", "select_other", "look_at", "fit", "chamfer", "shell", "measure", "section", "properties", "appearance",
                                       "parameters")]
             sel_bodies = {p.key for p in self.viewport.selection if p.kind in ("face", "body")}
             if sel_bodies:
@@ -930,6 +958,49 @@ class MainWindow(QMainWindow):
         bodies = sorted({p.key for p in self.viewport.selection if p.kind in ("face", "body", "edge")}) or \
             list(self.doc.state.bodies)
         D.properties_dialog(self, bodies)
+
+    def show_versions(self):
+        if self.panel is not None or self.session is not None:
+            return
+        D.VersionsDialog(self).exec()
+        self.refresh_all()
+
+    def run_script(self):
+        """Run a Python script against the open design (``design`` is bound to it)."""
+        from PySide6.QtWidgets import QFileDialog
+        from ..api import Design, run_script
+        if self.panel is not None or self.session is not None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Run script", self._last_dir(), "Python (*.py);;All files (*)")
+        if not path:
+            return
+        snap = self.doc.snapshot()
+        try:
+            run_script(path, Design(self.doc))
+        except Exception as exc:  # report, keep whatever the script managed to build
+            import traceback
+            QMessageBox.warning(self, "Script error", "".join(traceback.format_exception_only(type(exc), exc)))
+        self.doc.push_undo(f"Script {path.split('/')[-1]}", snap)
+        self.refresh_all()
+        self.viewport.fit_all()
+
+    def select_other(self):
+        """Clarify selection: choose between all faces along the ray under the cursor."""
+        vp = self.viewport
+        pos = vp.mapFromGlobal(self.cursor().pos())
+        hits = vp.ray_faces(pos.x(), pos.y())
+        if not hits:
+            self.statusBar().showMessage("Nothing under the cursor", 3000)
+            return
+        menu = QMenu(self)
+        for p, dist in hits:
+            body = self.doc.body_name(p.key)
+            a = menu.addAction(icon("body"), f"Face {p.index + 1} of {body}   ({dist:.1f} mm deep)")
+            a.triggered.connect(lambda _=False, p=p: vp.set_selection([p]))
+            a.hovered.connect(lambda p=p: (setattr(vp, "hover", p), vp.update()))
+        menu.exec(self.cursor().pos())
+        vp.hover = None
+        vp.update()
 
     def show_parameters(self):
         D.ParametersDialog(self).exec()
@@ -1049,6 +1120,8 @@ class MainWindow(QMainWindow):
             snap = doc.snapshot()
             doc.set_suppressed(payload, not f.suppressed)
             doc.push_undo("Suppress" if f.suppressed else "Unsuppress", snap)
+        elif action == "repair":
+            self.edit_feature(payload)
         elif action == "hover":
             self.viewport.highlight_bodies = self.feature_bodies(payload) if payload else set()
             self.viewport.update()

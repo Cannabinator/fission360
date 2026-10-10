@@ -439,46 +439,63 @@ class FeaturePanel(QFrame):
             self.vp.selection_changed.connect(self._on_selection)
         self._update_sel_label(key)
 
-    def _refs_to_picks(self, fs):
-        """Re-create viewport picks from stored references (editing)."""
+    def _ref_to_pick(self, k, ref):
+        """One stored reference -> viewport pick (raises when it cannot be found)."""
         st = self.base_state
+        if k == "profiles":
+            if "face" in ref:
+                bid, face = R.resolve_face(st, ref["face"])
+                return Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), face))
+            sk = st.sketches.get(ref["sketch"])
+            face = K.profile_at(sk.profiles, sk.frame, ref["uv"]) if sk else None
+            if face is None:
+                raise R.ReferenceError_("profile no longer exists")
+            return Pick("profile", ref["sketch"], _index_of(sk.profiles, face))
+        if k == "edges":
+            if "face" in ref:
+                bid, f = R.resolve_face(st, ref["face"])
+                return Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), f))
+            bid, e = R.resolve_edge(st, ref)
+            return Pick("edge", bid, _index_of(K.edges(st.bodies[bid].shape), e))
+        if k == "faces":
+            bid, f = R.resolve_face(st, ref)
+            return Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), f))
+        if k == "bodies":
+            if ref not in st.bodies:
+                raise R.ReferenceError_("body no longer exists")
+            return Pick("body", ref)
+        if k == "points":
+            sk = st.sketches.get(ref["sketch"])
+            if sk is None or ref["point"] not in sk.sketch.entities:
+                raise R.ReferenceError_("sketch point no longer exists")
+            return Pick("spoint", ref["sketch"], ref["point"])
+        raise R.ReferenceError_("unsupported reference")
+
+    def _refs_to_picks(self, fs):
+        """Re-create viewport picks from stored references (editing).  References
+        that can no longer be found are dropped and reported so the user can
+        simply re-select them (the 'repair lost references' flow)."""
         k, v = fs["kind"], self.data.get(fs["key"])
-        out = []
-        try:
-            if k == "profiles":
-                for ref in v or []:
-                    if "face" in ref:
-                        bid, face = R.resolve_face(st, ref["face"])
-                        out.append(Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), face)))
-                    else:
-                        sk = st.sketches.get(ref["sketch"])
-                        if sk is None:
-                            continue
-                        face = K.profile_at(sk.profiles, sk.frame, ref["uv"])
-                        if face is not None:
-                            out.append(Pick("profile", ref["sketch"], _index_of(sk.profiles, face)))
-            elif k == "edges":
-                for ref in v or []:
-                    if "face" in ref:
-                        bid, f = R.resolve_face(st, ref["face"])
-                        out.append(Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), f)))
-                    else:
-                        bid, e = R.resolve_edge(st, ref)
-                        out.append(Pick("edge", bid, _index_of(K.edges(st.bodies[bid].shape), e)))
-            elif k == "faces":
-                for ref in v or []:
-                    bid, f = R.resolve_face(st, ref)
-                    out.append(Pick("face", bid, _index_of(K.faces(st.bodies[bid].shape), f)))
-            elif k == "bodies":
-                out = [Pick("body", b) for b in v or [] if b in st.bodies]
-            elif k == "body":
-                out = [Pick("body", v)] if v in st.bodies else []
-            elif k == "points":
-                out = [Pick("spoint", r["sketch"], r["point"]) for r in v or []]
-            elif k == "path" and v:
-                out = [Pick("curve", v["sketch"], e) for e in v["entities"]]
-        except Exception:
-            pass
+        out, lost = [], 0
+        if k == "body":
+            out = [Pick("body", v)] if v in self.base_state.bodies else []
+            lost = 1 if v and not out else 0
+        elif k == "path":
+            if v:
+                sk = self.base_state.sketches.get(v["sketch"])
+                keep = [e for e in v["entities"] if sk is not None and e in sk.sketch.entities]
+                lost = len(v["entities"]) - len(keep)
+                out = [Pick("curve", v["sketch"], e) for e in keep]
+        elif k in ("profiles", "edges", "faces", "bodies", "points"):
+            for ref in v or []:
+                try:
+                    out.append(self._ref_to_pick(k, ref))
+                except Exception:
+                    lost += 1
+        if lost:
+            self.msg.setText(f"{lost} reference(s) in '{fs['label']}' could not be found after earlier changes - "
+                             "re-select them in the model, then press OK")
+            self._lost_refs = getattr(self, "_lost_refs", 0) + lost
         return out
 
     # ------------------------------------------------------------------ preview

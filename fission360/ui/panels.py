@@ -317,6 +317,8 @@ class _Strip(QWidget):
             if i >= 0:
                 f = self.doc.features[i]
                 tip = f.name + (f"\n⚠ {f.error}" if f.error else (f"\n{f.warning}" if f.warning else ""))
+                if f.error_kind == "reference":
+                    tip += "\nA face, edge or profile was lost - double-click to re-select it"
                 self.setToolTip(tip)
             self.update()
 
@@ -343,6 +345,8 @@ class _Strip(QWidget):
             return
         f = self.doc.features[i]
         m = QMenu(self)
+        if f.error_kind == "reference":
+            m.addAction(icon("warning"), "Repair lost references...", lambda: self.tl.request.emit("repair", f.id))
         m.addAction("Edit Feature" if f.type != "sketch" else "Edit Sketch",
                     lambda: self.tl.request.emit("edit_feature", f.id))
         m.addAction("Rename...", lambda: self.tl.request.emit("rename_feature", f.id))

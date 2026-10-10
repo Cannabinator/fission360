@@ -352,8 +352,7 @@ class Viewport(QOpenGLWidget):
             curves = sk.curves()
             cbase = self.reg.alloc(max((e.id for e in sk.entities.values()), default=0) + 1, "curve", fid)
             for e in curves:
-                pl = sk.polyline(e, seg_len=max(self.cam.pixel_size_at(fr.origin) * 3, 1e-3))
-                pts3 = fr.to_world(pl)
+                pls = sk.polylines(e, seg_len=max(self.cam.pixel_size_at(fr.origin) * 3, 1e-3))
                 selected = any(p.kind == "curve" and p.key == fid and p.index == e.id for p in self.selection)
                 if selected:
                     col = THEME.sk_selected
@@ -364,7 +363,8 @@ class Viewport(QOpenGLWidget):
                 else:
                     col = THEME.sk_inactive
                 target = self.sketch_construction if e.construction else self.sketch_batch
-                target.add_polyline(pts3, (*col, 1.0), cbase + e.id)
+                for pl in pls:
+                    target.add_polyline(fr.to_world(pl), (*col, 1.0), cbase + e.id)
             if active or self.show_points:
                 pbase = self.reg.alloc(max((e.id for e in sk.entities.values()), default=0) + 1, "spoint", fid)
                 for p in sk.points():
@@ -540,7 +540,8 @@ class Viewport(QOpenGLWidget):
         hc = self._hover_curve()
         if hc is not None:
             b = G.Batch()
-            b.add_polyline(hc, (*THEME.hover, 1.0))
+            for pl in hc:
+                b.add_polyline(pl, (*THEME.hover, 1.0))
             r.draw_lines(b, mvp, vp, 3.2 * dpr, depth=False)
             b.gpu and b.gpu.delete()
         r.draw_points(self.sketch_pts, mvp, 7 * dpr, depth=not in_sketch)
@@ -584,7 +585,8 @@ class Viewport(QOpenGLWidget):
         so = self._sketch_out(h.key)
         if so is None or h.index not in so.sketch.entities:
             return None
-        return so.frame.to_world(so.sketch.polyline(so.sketch.entities[h.index]))
+        pls = so.sketch.polylines(so.sketch.entities[h.index])
+        return [so.frame.to_world(pl) for pl in pls]
 
     def _sketch_out(self, fid):
         if self.sketch_ctx and self.sketch_ctx[0] == fid:
@@ -603,7 +605,71 @@ class Viewport(QOpenGLWidget):
         b.gpu and b.gpu.delete()
 
     # ------------------------------------------------------------------ overlay (QPainter)
+    def _draw_annotations(self, p: QPainter):
+        """Cosmetic thread labels etc. (not part of the B-rep)."""
+        if self.display_state is None and self.doc is None:
+            return
+        f = QFont(self.font())
+        f.setPointSizeF(8)
+        f.setItalic(True)
+        p.setFont(f)
+        for a in self.vstate.annotations:
+            try:
+                sc = self.screen_of(np.asarray(a["point"], float))
+            except Exception:
+                continue
+            fm = QFontMetrics(f)
+            w = fm.horizontalAdvance(a["text"]) + 10
+            r = QRectF(sc[0] - w / 2, sc[1] - 9, w, 18)
+            p.setPen(QPen(QColor(20, 120, 160), 1))
+            p.setBrush(QColor(230, 246, 252, 225) if THEME.light else QColor(30, 60, 72, 225))
+            p.drawRoundedRect(r, 9, 9)
+            p.setPen(QColor(15, 90, 125) if THEME.light else QColor(150, 220, 245))
+            p.drawText(r, Qt.AlignCenter, a["text"])
+
+    def ray_faces(self, x, y, limit=12):
+        """All faces pierced by the ray under the cursor, nearest first:
+        [(Pick, depth behind the first hit in mm)].  Lets the user pick faces
+        hidden behind others (Clarify Selection)."""
+        o, d = self.cam.ray(x, y)
+        o = np.asarray(o, float)
+        d = np.asarray(d, float)
+        hits = []
+        for b in self.vstate.bodies.values():
+            if self.doc is None or not self.doc.body_visible(b.id) or b.id in self.hidden_bodies:
+                continue
+            g = self.gpu.get(b.id)
+            if g is None or len(g[1].mesh.indices) == 0:
+                continue
+            m = g[1].mesh
+            P = m.positions.astype(np.float64)
+            T = m.indices.astype(np.int64)
+            v0, v1, v2 = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+            e1, e2 = v1 - v0, v2 - v0
+            h = np.cross(d, e2)
+            a = np.einsum("ij,ij->i", e1, h)
+            ok = np.abs(a) > 1e-12
+            f = np.where(ok, 1.0 / np.where(ok, a, 1.0), 0.0)
+            sv = o - v0
+            u = f * np.einsum("ij,ij->i", sv, h)
+            q = np.cross(sv, e1)
+            vv = f * (q @ d)
+            t = f * np.einsum("ij,ij->i", e2, q)
+            m_ok = ok & (u >= 0) & (vv >= 0) & (u + vv <= 1) & (t > 0)
+            best = {}
+            for ti in np.flatnonzero(m_ok):
+                fi = int(m.face_of_tri[ti])
+                if fi not in best or t[ti] < best[fi]:
+                    best[fi] = float(t[ti])
+            hits += [(t_, b.id, fi) for fi, t_ in best.items()]
+        hits.sort()
+        if not hits:
+            return []
+        t0 = hits[0][0]
+        return [(Pick("face", bid, fi), t_ - t0) for t_, bid, fi in hits[:limit]]
+
     def _draw_overlay(self, p: QPainter):
+        self._draw_annotations(p)
         self._draw_manipulators(p)
         if self._box is not None:
             x0, y0, x1, y1 = self._box
@@ -1311,7 +1377,8 @@ class Viewport(QOpenGLWidget):
         if self.sketch_ctx is not None:
             fid, sk, fr = self.sketch_ctx
             for e in sk.curves():
-                if hit(fr.to_world(sk.polyline(e, seg_len=self.cam.pixel_size_at(fr.origin) * 4))):
+                if hit(fr.to_world(np.vstack(sk.polylines(e, seg_len=self.cam.pixel_size_at(fr.origin) * 4) or
+                                             [np.zeros((0, 2))]))):
                     picks.append(Pick("curve", fid, e.id))
             for pt in sk.points():
                 if pt.id and pt.owner is None and hit(fr.to_world(np.array([sk.xy(pt.id)]))):

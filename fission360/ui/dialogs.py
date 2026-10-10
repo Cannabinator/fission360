@@ -606,3 +606,190 @@ SHORTCUTS = """
 <tr><td>Esc</td><td>Cancel current tool</td></tr><tr><td>Enter</td><td>Finish spline</td></tr>
 </table>
 """
+
+
+# ---------------------------------------------------------------------------
+class ValuesDialog(QDialog):
+    """Small modal form for a few expression fields: [(label, kind, default)]."""
+
+    def __init__(self, parent, doc, title, fields, note=""):
+        super().__init__(parent)
+        self.doc = doc
+        self.fields = fields
+        self.setWindowTitle(title)
+        lay = QFormLayout(self)
+        self.edits = []
+        for label, kind, default in fields:
+            e = QLineEdit(default)
+            e.textChanged.connect(self._validate)
+            self.edits.append(e)
+            lay.addRow(label, e)
+        if note:
+            n = QLabel(note)
+            n.setWordWrap(True)
+            n.setStyleSheet("color:#6b7380;")
+            lay.addRow(n)
+        self.err = QLabel("")
+        self.err.setStyleSheet("color:#c0392b;")
+        lay.addRow(self.err)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        self.ok = bb.button(QDialogButtonBox.Ok)
+        lay.addRow(bb)
+        self.edits[0].selectAll()
+        self._validate()
+
+    def _validate(self):
+        try:
+            self.values()
+            self.err.setText("")
+            self.ok.setEnabled(True)
+        except ExpressionError as exc:
+            self.err.setText(str(exc))
+            self.ok.setEnabled(False)
+
+    def values(self):
+        return [self.doc.params.eval_expr(e.text(), kind) for e, (_, kind, _) in zip(self.edits, self.fields)]
+
+
+class TextDialog(QDialog):
+    """Create / edit sketch text."""
+
+    def __init__(self, parent, doc, entity=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QCheckBox, QPlainTextEdit
+        self.doc = doc
+        self.setWindowTitle("Text")
+        lay = QFormLayout(self)
+        self.text = QLineEdit(entity.text if entity else "Text")
+        self.height = QLineEdit(f"{entity.height:g} mm" if entity else "5 mm")
+        self.angle = QLineEdit(f"{math.degrees(entity.angle):g} deg" if entity else "0 deg")
+        self.font = QComboBox()
+        from ..core import kernel as K
+        fonts = K.list_fonts()
+        self.font.addItems(["sans"] + fonts)
+        if entity and entity.font in fonts + ["sans"]:
+            self.font.setCurrentText(entity.font)
+        self.bold = QCheckBox("Bold")
+        self.italic = QCheckBox("Italic")
+        if entity:
+            self.bold.setChecked(entity.bold)
+            self.italic.setChecked(entity.italic)
+        row = QHBoxLayout()
+        row.addWidget(self.bold)
+        row.addWidget(self.italic)
+        lay.addRow("Text", self.text)
+        lay.addRow("Height", self.height)
+        lay.addRow("Font", self.font)
+        lay.addRow("", row)
+        lay.addRow("Angle", self.angle)
+        self.err = QLabel("")
+        self.err.setStyleSheet("color:#c0392b;")
+        lay.addRow(self.err)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        lay.addRow(bb)
+        self.text.selectAll()
+
+    def values(self):
+        p = self.doc.params
+        return {"text": self.text.text(), "height": p.eval_expr(self.height.text(), "length"),
+                "angle": p.eval_expr(self.angle.text(), "angle"), "font": self.font.currentText(),
+                "bold": self.bold.isChecked(), "italic": self.italic.isChecked()}
+
+    def _accept(self):
+        try:
+            v = self.values()
+            if not v["text"].strip():
+                raise ExpressionError("enter some text")
+            if v["height"] <= 0:
+                raise ExpressionError("height must be positive")
+        except ExpressionError as exc:
+            self.err.setText(str(exc))
+            return
+        self.accept()
+
+
+class VersionsDialog(QDialog):
+    """Named design versions: save, compare with the current state, restore."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win = win
+        self.doc = win.doc
+        self.setWindowTitle("Version history")
+        self.resize(560, 420)
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        self.name = QLineEdit()
+        self.name.setPlaceholderText("Name for a new version, e.g. 'before shelling'")
+        save = QPushButton("Save version")
+        save.clicked.connect(self.save_version)
+        top.addWidget(self.name, 1)
+        top.addWidget(save)
+        lay.addLayout(top)
+        self.list = QListWidget()
+        self.list.currentRowChanged.connect(self.show_diff)
+        lay.addWidget(self.list, 1)
+        lay.addWidget(QLabel("Changes since the selected version:"))
+        self.diff = QTextBrowser()
+        self.diff.setMaximumHeight(130)
+        lay.addWidget(self.diff)
+        row = QHBoxLayout()
+        self.restore_btn = QPushButton("Restore this version")
+        self.restore_btn.clicked.connect(self.restore)
+        self.delete_btn = QPushButton("Delete")
+        self.delete_btn.clicked.connect(self.delete)
+        row.addWidget(self.restore_btn)
+        row.addWidget(self.delete_btn)
+        row.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self.populate()
+
+    def populate(self):
+        self.list.clear()
+        for v in reversed(self.doc.versions):
+            self.list.addItem(f"{v['time']}   {v['name']}")
+        self.restore_btn.setEnabled(bool(self.doc.versions))
+        self.delete_btn.setEnabled(bool(self.doc.versions))
+        if self.doc.versions:
+            self.list.setCurrentRow(0)
+        else:
+            self.diff.setPlainText("No versions yet. Save one before risky changes; versions are stored inside the file.")
+
+    def _index(self):
+        r = self.list.currentRow()
+        return len(self.doc.versions) - 1 - r if r >= 0 else None
+
+    def save_version(self):
+        name = self.name.text().strip() or f"Version {len(self.doc.versions) + 1}"
+        self.doc.save_version(name)
+        self.name.clear()
+        self.populate()
+
+    def show_diff(self, _row):
+        i = self._index()
+        if i is None:
+            return
+        from ..core.document import Document
+        self.diff.setPlainText("\n".join(Document.diff(self.doc.versions[i]["data"], self.doc.to_dict())))
+
+    def restore(self):
+        i = self._index()
+        if i is None:
+            return
+        self.doc.restore_version(i)
+        self.win.refresh_all()
+        self.show_diff(0)
+
+    def delete(self):
+        i = self._index()
+        if i is not None:
+            del self.doc.versions[i]
+            self.doc.modified = True
+            self.populate()

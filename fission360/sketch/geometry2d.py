@@ -124,13 +124,13 @@ def nearest_on_curve(sketch, e, p):
             ends = [np.array(sketch.xy(e.pts[1])), np.array(sketch.xy(e.pts[2]))]
             q = min(ends, key=lambda t: math.dist(t, p))
         return q, math.dist(q, p)
-    if e.kind == "spline":
-        pl = sketch.polyline(e)
+    if e.kind in ("spline", "ellipse", "text"):
         best = (None, 1e18)
-        for a, b in zip(pl[:-1], pl[1:]):
-            q, _ = closest_on_segment(p, a, b)
-            dd = math.dist(q, p)
-            if dd < best[1]:
-                best = (q, dd)
+        for pl in sketch.polylines(e):
+            for a, b in zip(pl[:-1], pl[1:]):
+                q, _ = closest_on_segment(p, a, b)
+                dd = math.dist(q, p)
+                if dd < best[1]:
+                    best = (q, dd)
         return best
     return np.array(p), 1e18
