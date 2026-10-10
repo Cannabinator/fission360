@@ -36,3 +36,43 @@ def test_window_sketch_extrude(tmp_path, monkeypatch):
     assert img.width() > 0
     win.doc.modified = False
     win.close()
+
+
+def test_joint_command_and_component_browser(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtWidgets import QApplication
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
+    app = QApplication.instance() or QApplication([])
+    from fission360.api import Design
+    from fission360.core import kernel as K
+    from fission360.ui.main_window import MainWindow
+    from fission360.ui.viewport import Pick
+    win = MainWindow()
+    win.show()
+    d = Design(win.doc)
+    a = d.box(0, 0, 40, 30, 10)
+    b = d.box(100, 0, 20, 20, 10)
+    win.doc.set_component([b.body_id], "Lid")
+    win.refresh_all()
+    app.processEvents()
+    ids = list(win.doc.state.bodies)
+
+    def face(bid, nz):
+        fs = K.faces(win.doc.state.bodies[bid].shape)
+        return next(i for i, f in enumerate(fs) if abs(K.face_info(f)["normal"][2] - nz) < 1e-6)
+
+    win.run("joint")
+    win.viewport.set_selection([Pick("face", ids[1], face(ids[1], -1)), Pick("face", ids[0], face(ids[0], 1))])
+    win.panel.update_preview()
+    win.panel.accept()
+    assert not [f.error for f in win.doc.features if f.error]
+    lo, _ = K.bbox(win.doc.state.bodies[ids[1]].shape)
+    assert abs(lo[2] - 10) < 1e-6
+    names = [win.browser.topLevelItem(0).child(i).text(0) for i in range(win.browser.topLevelItem(0).childCount())]
+    assert "Bodies (2)" in names
+    win.doc.modified = False
+    win.close()

@@ -84,6 +84,15 @@ FEATURE_TYPES: dict[str, dict] = {
         F("full_length", "Full Length", "bool", True),
         F("length", "Length", "length", "10 mm", show=lambda d: not d.get("full_length", True)),
     ]},
+    "joint": {"label": "Joint", "icon": "joint", "key": "J", "fields": [
+        F("faces", "Faces (moving, then fixed)", "faces",
+          tip="Pick the face on the part that moves, then the face it mates to. Parts in the same component move together."),
+        F("joint_type", "Motion", "choice", "rigid", ["rigid", "revolute", "slider", "cylindrical"]),
+        F("flip", "Flip", "bool", False),
+        F("offset", "Offset / Travel", "length", "0 mm",
+          tip="Gap between planar faces, or travel along the axis for slider and cylindrical joints"),
+        F("angle", "Angle", "angle", "0 deg", tip="Rotation about the joint axis (revolute and cylindrical)"),
+    ]},
     "fillet": {"label": "Fillet", "icon": "fillet", "key": "F", "fields": [
         F("edges", "Edges/Faces", "edges", tip="Pick edges, or a face to round all its edges"),
         F("fillet_type", "Radius Type", "choice", "constant", ["constant", "variable"]),
@@ -815,6 +824,59 @@ def _exec_thread(doc, f, state):
         state.annotations.append({"feature": f.id, "text": TH.label(th["designation"], length, internal),
                                   "point": fi["center"], "dir": axis.tolist(), "radius": th["major"] / 2,
                                   "length": length})
+
+
+def _joint_frame(face):
+    """Joint origin and direction of a face: plane -> (centre, outward normal); cylinder -> (centre on axis, axis)."""
+    fi = K.face_info(face)
+    if fi["type"] == "plane":
+        return np.array(fi["center"]), np.array(fi["normal"]), "plane"
+    if fi["type"] in ("cylinder", "cone"):
+        axis, org = np.array(fi["axis_dir"]), np.array(fi["axis_origin"])
+        c = np.array(fi["center"])
+        return org + axis * float(np.dot(c - org, axis)), axis, "cylinder"
+    raise K.KernelError("joints need planar or cylindrical faces")
+
+
+def _exec_joint(doc, f, state):
+    refs = f.data.get("faces") or []
+    if len(refs) < 2:
+        raise K.KernelError("select the moving face, then the face it mates to")
+    mid, mface = R.resolve_face(state, refs[0])
+    fid, fface = R.resolve_face(state, refs[1])
+    if mid == fid:
+        raise K.KernelError("the two faces belong to the same body")
+    mo, md, mk = _joint_frame(mface)
+    fo, fd, fk = _joint_frame(fface)
+    jt = f.data.get("joint_type", "rigid")
+    # planes mate face-to-face (normals oppose); axes align along the fixed direction
+    target = -fd if (mk == "plane" and fk == "plane") else fd
+    if f.data.get("flip"):
+        target = -target
+    axis, ang = K.rotation_between(md, target)
+    off, rot = doc.val(f, "offset", 0.0), doc.val(f, "angle", 0.0)
+    gap_dir = fd if fk == "plane" else target       # offset pushes the part away from a mating plane
+    if jt in ("rigid", "revolute"):
+        shift = gap_dir * off if fk == "plane" else np.zeros(3)
+    elif jt == "slider":
+        shift = (fd if fk == "plane" else target) * off
+    else:
+        shift = fd * off
+    comp = doc.component_of(mid)
+    movers = [b for b in state.bodies if b == mid or (comp and doc.component_of(b) == comp)]
+    if fid in movers:
+        raise K.KernelError("the fixed face is on a part that moves with the first one")
+    for bid in movers:
+        s = state.bodies[bid].shape
+        if ang > 1e-12:
+            s = K.rotate(s, mo, axis, ang)
+        # after the rotation the moving origin is unchanged; bring it onto the fixed origin
+        s = K.translate(s, fo - mo)
+        if jt in ("revolute", "cylindrical") and abs(rot) > 1e-12:
+            s = K.rotate(s, fo, target, rot)
+        if np.linalg.norm(shift) > 1e-12:
+            s = K.translate(s, shift)
+        state.set_shape(bid, s)
 
 
 def _exec_import(doc, f, state):

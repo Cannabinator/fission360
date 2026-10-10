@@ -1138,6 +1138,65 @@ def export_step(shapes_with_names, path: str):
         raise KernelError("STEP write failed")
 
 
+def export_step_assembly(tree, path: str):
+    """STEP with an assembly structure.  ``tree`` = [(component name, [(part name, shape), ...]), ...];
+    components with a ``None`` name are written as top-level parts."""
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.TDataStd import TDataStd_Name
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFApp import XCAFApp_Application
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+
+    app = XCAFApp_Application.GetApplication_s()
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    app.NewDocument(TCollection_ExtendedString("XmlOcaf"), doc)
+    st = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+
+    def name(label, text):
+        TDataStd_Name.Set_s(label, TCollection_ExtendedString(text))
+
+    root = st.NewShape()
+    name(root, "Fission360 design")
+    for comp, parts in tree:
+        if comp is None:
+            for pname, shape in parts:
+                lab = st.AddShape(shape, False)
+                name(lab, pname)
+                st.AddComponent(root, lab, TopLoc_Location())
+            continue
+        asm = st.NewShape()
+        name(asm, comp)
+        for pname, shape in parts:
+            lab = st.AddShape(shape, False)
+            name(lab, pname)
+            st.AddComponent(asm, lab, TopLoc_Location())
+        st.AddComponent(root, asm, TopLoc_Location())
+    st.UpdateAssemblies()
+    Interface_Static.SetCVal_s("write.step.schema", "AP214")
+    Interface_Static.SetCVal_s("write.step.unit", "MM")
+    w = STEPCAFControl_Writer()
+    w.SetNameMode(True)
+    if not w.Transfer(doc, STEPControl_AsIs) or w.Write(path) != IFSelect_RetDone:
+        raise KernelError("STEP assembly write failed")
+
+
+def rotation_between(a, b):
+    """(axis, angle) rotating unit vector ``a`` onto ``b``."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+    c = np.cross(a, b)
+    s = float(np.linalg.norm(c))
+    d = float(np.dot(a, b))
+    if s < 1e-12:
+        if d > 0:
+            return np.array([0.0, 0.0, 1.0]), 0.0
+        perp = np.cross(a, [1.0, 0, 0] if abs(a[0]) < 0.9 else [0, 1.0, 0])
+        return perp / np.linalg.norm(perp), math.pi
+    return c / s, math.atan2(s, d)
+
+
 def export_iges(shapes, path: str):
     w = IGESControl_Writer("MM", 1)
     for s in shapes:

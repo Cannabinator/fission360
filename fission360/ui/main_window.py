@@ -281,6 +281,8 @@ class MainWindow(QMainWindow):
             C("sk_import_2d", "Insert DXF / SVG", "import2d", ses("import_2d"), "", "sketch",
               "Insert lines, arcs, circles and paths from a DXF or SVG file"),
             C("sk_export_dxf", "Export DXF", "dxf", ses("export_dxf"), "", "sketch"),
+            C("drawing", "Export Drawing...", "dxf", self.export_drawing, "", "solid",
+              "Orthographic views with hidden lines and overall dimensions, as SVG or DXF"),
             C("versions", "Version History", "save", self.show_versions, "", "any",
               "Save, compare and restore named versions"),
             C("run_script", "Run Script...", "parameters", self.run_script, "", "any",
@@ -304,8 +306,9 @@ class MainWindow(QMainWindow):
             ("MODIFY", ["fillet", "chamfer", "shell", "draft", "thread", "combine", "move",
                         ("menu", "More", "scale", ["scale", "split_body", "remove"]), "parameters"]),
             ("CONSTRUCT", [("menu", "Plane", "plane", ["plane_offset", "plane_angle"]), "axis_construct"]),
+            ("ASSEMBLE", ["joint"]),
             ("INSPECT", ["measure", "section", "properties", "interference"]),
-            ("INSERT", ["import", "export"]),
+            ("INSERT", ["import", "export", "drawing"]),
         ])
         self.ribbon.add_tab("SKETCH", [
             ("CREATE", ["sk_line", ("menu", "Rectangle", "rect", ["sk_rect", "sk_rect_center"]),
@@ -432,6 +435,7 @@ class MainWindow(QMainWindow):
         self._refresh_recent()
         fm.addSeparator()
         self._menu_action(fm, "versions")
+        self._menu_action(fm, "drawing")
         fm.addSeparator()
         self._menu_action(fm, "import")
         self._menu_action(fm, "export")
@@ -959,6 +963,24 @@ class MainWindow(QMainWindow):
             list(self.doc.state.bodies)
         D.properties_dialog(self, bodies)
 
+    def export_drawing(self):
+        from PySide6.QtWidgets import QFileDialog
+        from .. import drawing
+        bodies = self.doc.visible_bodies()
+        if not bodies:
+            self.statusBar().showMessage("Nothing to draw", 3000)
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export drawing", f"{self.doc.name}.svg",
+                                              "SVG drawing (*.svg);;DXF drawing (*.dxf)")
+        if not path:
+            return
+        try:
+            drawing.export_drawing(K.compound([b.shape for b in bodies]), path, self.doc.name,
+                                   ("front", "top", "right", "iso"))
+            self.statusBar().showMessage(f"Drawing saved to {path}", 5000)
+        except Exception as exc:
+            QMessageBox.warning(self, "Drawing", str(exc))
+
     def show_versions(self):
         if self.panel is not None or self.session is not None:
             return
@@ -1068,6 +1090,12 @@ class MainWindow(QMainWindow):
                 snap = doc.snapshot()
                 doc.rename_feature(payload, name)
                 doc.push_undo("Rename", snap)
+        elif action == "set_component":
+            cur = doc.component_of(payload) or ""
+            name, ok = QInputDialog.getText(self, "Component", "Component name (empty = none):", text=cur)
+            if ok:
+                targets = [payload]
+                doc.set_component(targets, name.strip() or None)
         elif action == "rename_body":
             name, ok = QInputDialog.getText(self, "Rename Body", "Name:", text=doc.body_name(payload))
             if ok and name:

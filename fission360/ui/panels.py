@@ -63,13 +63,21 @@ class Browser(QTreeWidget):
             it.setData(0, ROLE, ("origin_plane", n))
             origin.addChild(it)
         bodies = folder(f"Bodies ({len(st.bodies)})", "bodies", "folder")
+        groups = {}
         for b in st.bodies.values():
             it = QTreeWidgetItem([doc.body_name(b.id)])
             it.setFlags(it.flags() | Qt.ItemIsEditable)
             it.setIcon(0, icon("body"))
             it.setData(0, ROLE, ("body", b.id))
             self._eye(it, doc.body_visible(b.id))
-            bodies.addChild(it)
+            comp = doc.component_of(b.id)
+            if comp and comp not in groups:
+                g = QTreeWidgetItem([comp])
+                g.setIcon(0, icon("folder"))
+                g.setData(0, ROLE, ("component", comp))
+                bodies.addChild(g)
+                groups[comp] = g
+            (groups[comp] if comp else bodies).addChild(it)
         sketches = [(f, st.sketches.get(f.id)) for f in doc.features if f.type == "sketch"]
         if sketches:
             sk_folder = folder(f"Sketches ({len(sketches)})", "sketches")
@@ -152,6 +160,7 @@ class Browser(QTreeWidget):
             m.addAction("Rename...", lambda: self.request.emit("rename_body", key))
             m.addAction(icon("appearance"), "Appearance...", lambda: self.request.emit("appearance", key))
             m.addAction("Physical Material...", lambda: self.request.emit("material", key))
+            m.addAction("Set Component...", lambda: self.request.emit("set_component", key))
             m.addAction(icon("mass"), "Properties", lambda: self.request.emit("properties", key))
             m.addSeparator()
             m.addAction(icon("export"), "Export Body...", lambda: self.request.emit("export_body", key))

@@ -572,6 +572,28 @@ class Document:
     def unused_names(self, text: str) -> set:
         return {n for n in names_in(text) if n not in self.params.params}
 
+    # ------------------------------------------------------------------ components
+    def component_of(self, bid: str) -> str | None:
+        return self.body_props.get(bid, {}).get("component") or None
+
+    def components(self) -> dict:
+        """Component name -> [body ids] for the current model."""
+        out: dict = {}
+        for bid in self.state.bodies:
+            c = self.component_of(bid)
+            if c:
+                out.setdefault(c, []).append(bid)
+        return out
+
+    def set_component(self, bids, name: str | None):
+        for bid in bids:
+            if name:
+                self.body_props.setdefault(bid, {})["component"] = name
+            else:
+                self.body_props.get(bid, {}).pop("component", None)
+        self.modified = True
+        self.notify("props")
+
     def export_bodies(self, path: str, bodies=None):
         import os
         bodies = bodies or self.visible_bodies()
@@ -580,7 +602,13 @@ class Document:
         ext = os.path.splitext(path)[1].lower()
         shapes = [b.shape for b in bodies]
         if ext in (".step", ".stp"):
-            K.export_step([(self.body_name(b.id), b.shape) for b in bodies], path)
+            if any(self.component_of(b.id) for b in bodies):
+                tree: dict = {}
+                for b in bodies:
+                    tree.setdefault(self.component_of(b.id), []).append((self.body_name(b.id), b.shape))
+                K.export_step_assembly(list(tree.items()), path)
+            else:
+                K.export_step([(self.body_name(b.id), b.shape) for b in bodies], path)
         elif ext in (".iges", ".igs"):
             K.export_iges(shapes, path)
         elif ext == ".stl":

@@ -325,6 +325,25 @@ class Design:
                              "full_length": length is None},
                   {"length": length or "10 mm"})
 
+    def drawing(self, path: str, views=("front", "top", "right"), size="A3", hidden=True):
+        """Write an orthographic drawing sheet (.svg or .dxf) of all visible bodies."""
+        from . import drawing
+        bodies = self.doc.visible_bodies()
+        return drawing.export_drawing(K.compound([b.shape for b in bodies]), path, self.doc.name, tuple(views), size,
+                                      hidden)
+
+    def component(self, name: str, *bodies: Selection):
+        """Group bodies into a named component (moves together under joints, exported as an assembly)."""
+        self.doc.set_component([b.body_id for b in bodies], name)
+
+    def joint(self, moving, fixed, kind="rigid", offset="0 mm", angle="0 deg", flip=False):
+        """Mate a face of the moving part to a face of the fixed part.
+
+        kind: rigid | revolute | slider | cylindrical
+        """
+        self._add("joint", default_data("joint") | {"faces": self._face_refs([moving, fixed]), "joint_type": kind,
+                                                    "flip": flip}, {"offset": offset, "angle": angle})
+
     def mirror(self, body: Selection, plane="YZ", combine=True):
         self._add("mirror", {"bodies": [body.body_id], "plane": plane, "combine": combine})
 
