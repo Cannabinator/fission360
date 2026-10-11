@@ -21,6 +21,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath, 
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from ..core import kernel as K
+from ..core.materials import DEFAULT_FINISH, FINISH as MATERIAL_FINISH
 from . import gl as G
 from .camera import STANDARD_VIEWS, Camera, look_rotation, matrix_quat
 from .theme import THEME
@@ -554,7 +555,8 @@ class Viewport(QOpenGLWidget):
                     if alpha < 1.0:
                         transparent.append((g, col, alpha, hl))
                     else:
-                        r.draw_body(g, mvp, view, col, 1.0, hl, THEME.hover)
+                        fin = MATERIAL_FINISH.get(doc.body_material(b.id), DEFAULT_FINISH)
+                        r.draw_body(g, mvp, view, col, 1.0, hl, THEME.hover, finish=fin)
                 if body_sel:
                     r.draw_faces_flat(g, mvp, view, list(g.face_ranges), THEME.select, 0.35)
                 elif b.id in self.highlight_bodies:

@@ -193,3 +193,35 @@ def test_render_image_ground_shadow(tmp_path, monkeypatch):
     assert dark(on) > dark(off) + 200          # the cast shadow darkens a large ground area
     win.doc.modified = False
     win.close()
+
+
+def test_material_finish_changes_highlight(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtWidgets import QApplication
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
+    app = QApplication.instance() or QApplication([])
+    from fission360.api import Design
+    from fission360.core.materials import FINISH
+    from fission360.ui.main_window import MainWindow
+    assert FINISH["Glass"][0] > FINISH["Wood (Oak)"][0] and FINISH["Stainless Steel"][1] > FINISH["Nylon"][1]
+    win = MainWindow()
+    win.show()
+    b = Design(win.doc).cylinder(0, 0, 30, 30)
+    win.refresh_all()
+    win.viewport.fit_all()
+    app.processEvents()
+
+    def brightest(material):
+        win.doc.set_body_prop(b.body_id, "material", material)
+        win.refresh_all()
+        img = win.viewport.render_image(480, 270, "white", shadows=False)
+        return max(img.pixelColor(x, y).lightness() for x in range(0, 480, 3) for y in range(0, 270, 3)
+                   if img.pixelColor(x, y).name() != "#ffffff")
+
+    assert brightest("Glass") >= brightest("Concrete")
+    win.doc.modified = False
+    win.close()

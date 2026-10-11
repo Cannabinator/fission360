@@ -57,6 +57,8 @@ uniform sampler2D u_shadow_map;
 uniform mat4 u_light;
 uniform vec3 u_key;
 uniform vec3 u_key_world;
+uniform float u_spec;
+uniform float u_shine;
 uniform vec3 u_color;
 uniform float u_alpha;
 uniform int u_hl_face;          // hovered face (local index) or -1
@@ -92,11 +94,11 @@ void main() {
     float d1 = max(dot(n, l1), 0.0);
     float d2 = max(dot(n, l2), 0.0);
     vec3 h1 = normalize(l1 + v);
-    float s1 = pow(max(dot(n, h1), 0.0), 48.0);
+    float s1 = pow(max(dot(n, h1), 0.0), u_shine);
     float hemi = 0.5 + 0.5 * n.y;
     vec3 amb = mix(vec3(0.20, 0.20, 0.22), vec3(0.34, 0.35, 0.38), hemi);
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.18;
-    vec3 c = base * (amb + d1 * sh * 0.62 + d2 * 0.22) + vec3(s1 * sh * 0.28) + vec3(rim);
+    vec3 c = base * (amb + d1 * sh * 0.62 + d2 * 0.22) + vec3(s1 * sh * u_spec) + vec3(rim);
     o_color = vec4(pow(c, vec3(1.0/1.08)), u_alpha);
 }
 """
@@ -602,7 +604,8 @@ class Renderer:
         GL.glEnable(GL.GL_PROGRAM_POINT_SIZE)
         GL.glEnable(GL.GL_CLIP_DISTANCE0)
 
-    def draw_body(self, gpu: BodyGPU, mvp, view, color, alpha=1.0, hl_face=-1, hl_color=(0.3, 0.6, 1.0)):
+    def draw_body(self, gpu: BodyGPU, mvp, view, color, alpha=1.0, hl_face=-1, hl_color=(0.3, 0.6, 1.0),
+                  finish=(0.28, 48.0)):
         p = self.mesh.use()
         p.m4("u_mvp", mvp)
         p.m4("u_view", view)
@@ -612,6 +615,8 @@ class Renderer:
         p.i("u_hl_face", hl_face)
         p.v3("u_hl_color", hl_color)
         p.i("u_flat", 0)
+        p.f("u_spec", finish[0])
+        p.f("u_shine", finish[1])
         p.i("u_shadow_on", 1 if self.shadow_active else 0)
         if self.shadow_active:
             GL.glActiveTexture(GL.GL_TEXTURE1)
