@@ -77,6 +77,7 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 - **Drawing extras**: section view A-A with 45° hatching (`views=(..., "section")`), centre marks, centre lines and Ø callouts for holes and bosses.
 - **Placed dimensions and parts list**: `design.drawing(path, dims=[{"view": "front", "p1": (0,0,0), "p2": (25,0,0), "kind": "horizontal"}], bom=True)` adds horizontal/vertical/aligned dimensions with extension lines (optional text override, e.g. tolerances) and a BOM table (components merged, mass from each body's material).
 - **Sheet metal (phase 3, first slice)**: *Flange* bends a wall from a sheet's thin edge face (height, angle, inside radius, K-factor, bend direction) and records the bend. *Flat Pattern (DXF)* unfolds the body analytically (developed length = bend allowance `angle*(R+K*t)` + height) into CUT and BEND layers, holes included. Script: `design.flange(face, "15 mm", "90 deg", "3 mm")`, `design.flat_pattern("part.dxf")`. Current limits: flanges attach to the base sheet only (no flange-on-flange), no corner reliefs, no hems/jogs.
+- **Render Image** (Insert ▸ Render Image): antialiased (4x MSAA) offscreen PNG/JPEG at HD, 4K, 720p or square, studio-gradient or white background, without grid, origin, selection or UI. This is a clean rasteriser export, not a ray tracer: no shadows, reflections or material library yet.
 - Script: `design.component("Lid", body)`, `design.joint(moving_face, fixed_face, kind="revolute", angle="30 deg")`.
 
 **Roadmap implementation (from the competitive analysis in `reports/`)**

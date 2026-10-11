@@ -140,3 +140,28 @@ def test_flange_command_in_gui(tmp_path, monkeypatch):
     assert hi[2] > 10
     win.doc.modified = False
     win.close()
+
+
+def test_render_image_offscreen(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtWidgets import QApplication
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
+    app = QApplication.instance() or QApplication([])
+    from fission360.api import Design
+    from fission360.ui.main_window import MainWindow
+    win = MainWindow()
+    win.show()
+    Design(win.doc).box(0, 0, 40, 30, 10)
+    win.refresh_all()
+    win.viewport.fit_all()
+    app.processEvents()
+    img = win.viewport.render_image(960, 540, "white")
+    assert (img.width(), img.height()) == (960, 540)
+    px = {img.pixelColor(x, y).name() for x in range(0, 960, 40) for y in range(0, 540, 30)}
+    assert "#ffffff" in px and len(px) > 3          # white background plus shaded body
+    win.doc.modified = False
+    win.close()

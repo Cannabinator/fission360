@@ -281,6 +281,8 @@ class MainWindow(QMainWindow):
             C("sk_import_2d", "Insert DXF / SVG", "import2d", ses("import_2d"), "", "sketch",
               "Insert lines, arcs, circles and paths from a DXF or SVG file"),
             C("sk_export_dxf", "Export DXF", "dxf", ses("export_dxf"), "", "sketch"),
+            C("render_image", "Render Image...", "appearance", self.render_image, "", "solid",
+              "Save a high-resolution, antialiased image of the model (no grid or UI)"),
             C("flat_pattern", "Flat Pattern (DXF)...", "flat", self.export_flat_pattern, "", "solid",
               "Unfold the sheet-metal body (bend allowance from each flange's K-factor) and save it as DXF"),
             C("drawing", "Export Drawing...", "dxf", self.export_drawing, "", "solid",
@@ -311,7 +313,7 @@ class MainWindow(QMainWindow):
             ("SHEET METAL", ["flange", "flat_pattern"]),
             ("ASSEMBLE", ["joint"]),
             ("INSPECT", ["measure", "section", "properties", "interference"]),
-            ("INSERT", ["import", "export", "drawing"]),
+            ("INSERT", ["import", "export", "drawing", "render_image"]),
         ])
         self.ribbon.add_tab("SKETCH", [
             ("CREATE", ["sk_line", ("menu", "Rectangle", "rect", ["sk_rect", "sk_rect_center"]),
@@ -965,6 +967,27 @@ class MainWindow(QMainWindow):
         bodies = sorted({p.key for p in self.viewport.selection if p.kind in ("face", "body", "edge")}) or \
             list(self.doc.state.bodies)
         D.properties_dialog(self, bodies)
+
+    RENDER_SIZES = {"1920 x 1080 (HD)": (1920, 1080), "3840 x 2160 (4K)": (3840, 2160), "1280 x 720": (1280, 720),
+                    "2048 x 2048 (square)": (2048, 2048)}
+
+    def render_image(self):
+        from PySide6.QtWidgets import QFileDialog
+        size, ok = QInputDialog.getItem(self, "Render image", "Size:", list(self.RENDER_SIZES), 0, False)
+        if not ok:
+            return
+        bg, ok = QInputDialog.getItem(self, "Render image", "Background:", ["Studio gradient", "White"], 0, False)
+        if not ok:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save image", f"{self.doc.name}.png", "PNG image (*.png);;JPEG (*.jpg)")
+        if not path:
+            return
+        w, h = self.RENDER_SIZES[size]
+        img = self.viewport.render_image(w, h, "white" if bg == "White" else "gradient")
+        if img.isNull() or not img.save(path):
+            QMessageBox.warning(self, "Render", "Could not render or save the image")
+        else:
+            self.statusBar().showMessage(f"Saved {w}x{h} image to {path}", 5000)
 
     def export_flat_pattern(self):
         from PySide6.QtWidgets import QFileDialog

@@ -462,6 +462,47 @@ class Viewport(QOpenGLWidget):
         dpr = self._dpr()
         W, H = int(self.width() * dpr), int(self.height() * dpr)
         self.cam.width, self.cam.height = self.width(), self.height()
+        self._paint_scene(W, H, dpr)
+        # overlay
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        self._draw_overlay(p)
+        p.end()
+        self.fps_ms = (time.perf_counter() - t0) * 1000
+
+    def render_image(self, width: int, height: int, background="gradient", samples=4):
+        """Render the model (no grid, origin, sketches, selection or UI) into an image of any size."""
+        from PySide6.QtGui import QImage
+        from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+        self.makeCurrent()
+        saved = (self.selection, self.hover, self.show_grid, self.show_origin, self.cam.width, self.cam.height,
+                 THEME.bg_top, THEME.bg_bottom)
+        try:
+            if self.scene_dirty:
+                self._rebuild_scene()
+            fmt = QOpenGLFramebufferObjectFormat()
+            fmt.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
+            fmt.setSamples(samples)
+            fbo = QOpenGLFramebufferObject(int(width), int(height), fmt)
+            fbo.bind()
+            self.selection, self.hover, self.show_grid, self.show_origin = [], None, False, False
+            if background == "white":
+                THEME.bg_top = THEME.bg_bottom = (1.0, 1.0, 1.0)
+            self.cam.width, self.cam.height = self.width(), self.width() * height / width
+            self._rendering_clean = True
+            self._paint_scene(int(width), int(height), width / max(self.width(), 1))
+            img = fbo.toImage()
+            fbo.release()
+            return img
+        finally:
+            self._rendering_clean = False
+            (self.selection, self.hover, self.show_grid, self.show_origin, self.cam.width, self.cam.height,
+             THEME.bg_top, THEME.bg_bottom) = saved
+            self.doneCurrent()
+            self.update()
+
+    def _paint_scene(self, W, H, dpr):
         r = self.r
         r.clip = self._clip_vec()
         r.begin(W, H, THEME.bg_top, THEME.bg_bottom)
@@ -527,6 +568,9 @@ class Viewport(QOpenGLWidget):
                 r.draw_edges(g, mvp, vp, (*rgb, 0.9), 1.2 * dpr)
 
         # construction planes
+        if getattr(self, "_rendering_clean", False):
+            GL.glDisable(GL.GL_CLIP_DISTANCE0)
+            return
         r.draw_tris(self.plane_batch, mvp, self._hover_local("plane"))
         r.draw_lines(self.plane_lines, mvp, vp, 1.2 * dpr)
         if self.show_origin or self.sketch_ctx is not None:
@@ -556,14 +600,6 @@ class Viewport(QOpenGLWidget):
         if self.tool_points.pos:
             r.draw_points(self.tool_points, mvp, 8 * dpr, round_=True, depth=False)
         GL.glDisable(GL.GL_CLIP_DISTANCE0)
-
-        # overlay
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.TextAntialiasing)
-        self._draw_overlay(p)
-        p.end()
-        self.fps_ms = (time.perf_counter() - t0) * 1000
 
     def _clip_vec(self):
         if not self.section:
