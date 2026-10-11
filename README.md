@@ -142,3 +142,9 @@ fission360/
 
 Implemented from the roadmap: Phase 0 (robustness, diffable format) and Phase 1 (sketch tools, DXF/SVG, 3MF, threads, rib, variable fillet) plus from Phase 2 the scripting API and file versioning. Plus the first slice of Phase 2: joints, components with assembly STEP export, and 2D drawings. **Not yet implemented**: sheet-metal jogs and side-edge flanges, as-built joints and contact/collision during motion, a GUI for placing drawing dimensions, detail views, full-round fillet, modeled (helical) threads, canvas images, thicken/stitch/surface tools, direct-edit face tools, sheet metal, CAM, simulation, rendering, T-splines. See `reports/Fission360 competitive gap analysis.md` for the full prioritised plan.
 
+## Licence
+
+Fission360 is free software under the **GNU Lesser General Public License, version 2.1 or (at your option) any later
+version** - see [`LICENSE`](LICENSE). Third-party components and their licences are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Fission360 is not affiliated with or endorsed by Autodesk;
+"Fusion 360" is an Autodesk trademark used here only to describe the workflow this project is modelled on.
