@@ -281,6 +281,8 @@ class MainWindow(QMainWindow):
             C("sk_import_2d", "Insert DXF / SVG", "import2d", ses("import_2d"), "", "sketch",
               "Insert lines, arcs, circles and paths from a DXF or SVG file"),
             C("sk_export_dxf", "Export DXF", "dxf", ses("export_dxf"), "", "sketch"),
+            C("flat_pattern", "Flat Pattern (DXF)...", "flat", self.export_flat_pattern, "", "solid",
+              "Unfold the sheet-metal body (bend allowance from each flange's K-factor) and save it as DXF"),
             C("drawing", "Export Drawing...", "dxf", self.export_drawing, "", "solid",
               "Orthographic views with hidden lines and overall dimensions, as SVG or DXF"),
             C("versions", "Version History", "save", self.show_versions, "", "any",
@@ -306,6 +308,7 @@ class MainWindow(QMainWindow):
             ("MODIFY", ["fillet", "chamfer", "shell", "draft", "thread", "combine", "move",
                         ("menu", "More", "scale", ["scale", "split_body", "remove"]), "parameters"]),
             ("CONSTRUCT", [("menu", "Plane", "plane", ["plane_offset", "plane_angle"]), "axis_construct"]),
+            ("SHEET METAL", ["flange", "flat_pattern"]),
             ("ASSEMBLE", ["joint"]),
             ("INSPECT", ["measure", "section", "properties", "interference"]),
             ("INSERT", ["import", "export", "drawing"]),
@@ -962,6 +965,24 @@ class MainWindow(QMainWindow):
         bodies = sorted({p.key for p in self.viewport.selection if p.kind in ("face", "body", "edge")}) or \
             list(self.doc.state.bodies)
         D.properties_dialog(self, bodies)
+
+    def export_flat_pattern(self):
+        from PySide6.QtWidgets import QFileDialog
+        from ..core import sheetmetal as SM
+        st = self.doc.state
+        if not st.sheet:
+            self.statusBar().showMessage("No flanges yet - add a Flange to a sheet edge first", 4000)
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Flat pattern", f"{self.doc.name}_flat.dxf", "DXF (*.dxf)")
+        if not path:
+            return
+        try:
+            bid = next(b for b in st.bodies if self.doc.body_visible(b))
+            cuts, bends = SM.flat_pattern(st.bodies[bid].shape, st.sheet)
+            SM.write_flat_dxf(cuts, bends, path if path.endswith(".dxf") else path + ".dxf")
+            self.statusBar().showMessage(f"Flat pattern saved to {path}", 5000)
+        except Exception as exc:
+            QMessageBox.warning(self, "Flat pattern", str(exc))
 
     def export_drawing(self):
         from PySide6.QtWidgets import QFileDialog

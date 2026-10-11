@@ -125,6 +125,8 @@ ICONS = {
     "play_last": f'<path d="M19 4 V20 M5 4 L16 12 L5 20 Z" fill="{D}" stroke="{D}" stroke-width="1.5"/>',
     "search": f'<circle cx="10" cy="10" r="6" fill="none" stroke="{D}" stroke-width="1.8"/><path d="M14.5 14.5 L20 20" stroke="{D}" stroke-width="2.2"/>',
     "appearance": f'<circle cx="12" cy="12" r="9" fill="#e9eef5" stroke="{D}"/><circle cx="8" cy="9" r="2" fill="{R}"/><circle cx="13" cy="7" r="2" fill="{GR}"/><circle cx="16.5" cy="11" r="2" fill="{B}"/>',
+    "flange": f'<path d="M3 18 H15 C19 18 20 16 20 12 V4 H17 V12 C17 13 16.5 15 15 15 H3 Z" {_BODY}/>',
+    "flat": f'<path d="M3 8 H21 V16 H3 Z" fill="white" stroke="{D}"/><path d="M9 8 V16 M15 8 V16" stroke="{O}" stroke-dasharray="2 1.5"/>',
     "joint": f'<rect x="2" y="13" width="10" height="8" {_BODY}/><rect x="12" y="3" width="10" height="8" {_BODY}/><circle cx="12" cy="12" r="2.2" fill="{O}" stroke="{D}"/>',
     "interference": f'<rect x="3" y="7" width="11" height="11" {_BODY}/><rect x="10" y="4" width="11" height="11" {_BODY} opacity=".85"/><rect x="10" y="7" width="4" height="8" fill="{R}"/>',
 }

@@ -84,6 +84,15 @@ FEATURE_TYPES: dict[str, dict] = {
         F("full_length", "Full Length", "bool", True),
         F("length", "Length", "length", "10 mm", show=lambda d: not d.get("full_length", True)),
     ]},
+    "flange": {"label": "Flange", "icon": "flange", "fields": [
+        F("face", "Sheet Edge Face", "faces", tip="Pick the thin edge face of the sheet where the wall should start"),
+        F("height", "Flange Height", "length", "15 mm"),
+        F("angle", "Bend Angle", "angle", "90 deg"),
+        F("radius", "Bend Radius", "length", "2 mm"),
+        F("k_factor", "K-Factor", "scalar", "0.44", tip="Neutral-axis position in the bend (0.3 .. 0.5)"),
+        F("side", "Bend Direction", "choice", "plus", ["plus", "minus"],
+          tip="Which way the wall bends across the sheet thickness; flip it if it goes the wrong way"),
+    ]},
     "joint": {"label": "Joint", "icon": "joint", "key": "J", "fields": [
         F("faces", "Faces (moving, then fixed)", "faces",
           tip="Pick the face on the part that moves, then the face it mates to. Parts in the same component move together."),
@@ -824,6 +833,26 @@ def _exec_thread(doc, f, state):
         state.annotations.append({"feature": f.id, "text": TH.label(th["designation"], length, internal),
                                   "point": fi["center"], "dir": axis.tolist(), "radius": th["major"] / 2,
                                   "length": length})
+
+
+def _exec_flange(doc, f, state):
+    from . import sheetmetal as SM
+    refs = f.data.get("face") or []
+    if isinstance(refs, dict):
+        refs = [refs]
+    if not refs:
+        raise K.KernelError("select the sheet edge face for the flange")
+    for ref in refs:
+        bid, face = R.resolve_face(state, ref)
+        h, ang, rad = doc.val(f, "height"), doc.val(f, "angle"), doc.val(f, "radius")
+        k = doc.val(f, "k_factor", 0.44)
+        if h < 0 or not 0 < ang < math.pi - 1e-6 or rad < 0:
+            raise K.KernelError("height, bend angle (0..180 deg) and radius must be valid")
+        solid, rec = SM.make_flange(face, h, ang, rad, k, f.data.get("side", "plus") == "plus")
+        rec["feature"] = f.id
+        shape = K.fuse(state.bodies[bid].shape, solid)
+        _store_result(state, bid, shape)
+        state.sheet.append(rec)
 
 
 def _joint_frame(face):

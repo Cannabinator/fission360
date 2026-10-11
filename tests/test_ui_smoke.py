@@ -107,3 +107,36 @@ def test_joint_motion_dialog(tmp_path, monkeypatch):
     assert win.doc.val(win.doc.feature(j.id), "angle") == 0
     win.doc.modified = False
     win.close()
+
+
+def test_flange_command_in_gui(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtWidgets import QApplication
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
+    app = QApplication.instance() or QApplication([])
+    from fission360.api import Design
+    from fission360.core import kernel as K
+    from fission360.ui.main_window import MainWindow
+    from fission360.ui.viewport import Pick
+    win = MainWindow()
+    win.show()
+    d = Design(win.doc)
+    p = d.box(0, 0, 60, 40, 2)
+    bid = p.body_id
+    fs = K.faces(win.doc.state.bodies[bid].shape)
+    idx = next(i for i, f in enumerate(fs) if K.face_info(f)["normal"][1] > 0.99)
+    win.run("flange")
+    win.viewport.set_selection([Pick("face", bid, idx)])
+    win.panel.widgets["height"].setText("12 mm")
+    win.panel.update_preview()
+    win.panel.accept()
+    assert not [f.error for f in win.doc.features if f.error]
+    assert len(win.doc.state.sheet) == 1
+    lo, hi = K.bbox(win.doc.state.bodies[bid].shape)
+    assert hi[2] > 10
+    win.doc.modified = False
+    win.close()

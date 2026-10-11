@@ -347,6 +347,21 @@ class Design:
         return drawing.export_drawing(K.compound([b.shape for b in bodies]), path, self.doc.name, tuple(views), size,
                                       hidden, dims, items or None)
 
+    def flange(self, face, height="15 mm", angle="90 deg", radius="2 mm", k_factor="0.44", flip=False):
+        """Bend a wall up from a sheet's edge face (reference from ``Selection.faces``)."""
+        self._add("flange", default_data("flange") | {"face": self._face_refs(face), "side": "minus" if flip else "plus"},
+                  {"height": height, "angle": angle, "radius": radius, "k_factor": k_factor})
+
+    def flat_pattern(self, path: str, body: Selection | None = None):
+        """Write the unfolded sheet as DXF (CUT and BEND layers); returns the developed bounding size."""
+        from .core import sheetmetal as SM
+        body = body or self.bodies[0]
+        bends = self.doc.state.sheet
+        cuts, bend_lines = SM.flat_pattern(body.shape, bends)
+        SM.write_flat_dxf(cuts, bend_lines, path)
+        pts = np.vstack(cuts)
+        return tuple((pts.max(axis=0) - pts.min(axis=0)).tolist())
+
     def component(self, name: str, *bodies: Selection):
         """Group bodies into a named component (moves together under joints, exported as an assembly)."""
         self.doc.set_component([b.body_id for b in bodies], name)

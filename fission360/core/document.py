@@ -65,10 +65,11 @@ class ModelState:
     axes: dict = field(default_factory=dict)         # feature id -> (origin, dir)
     body_order: list = field(default_factory=list)   # creation order for default names
     annotations: list = field(default_factory=list)  # cosmetic threads etc. (labels in the viewport)
+    sheet: list = field(default_factory=list)        # sheet-metal bend records (for flat patterns)
 
     def copy(self) -> "ModelState":
         return ModelState(dict(self.bodies), dict(self.sketches), dict(self.planes), dict(self.axes),
-                          list(self.body_order), list(self.annotations))
+                          list(self.body_order), list(self.annotations), list(self.sheet))
 
     def add_body(self, bid: str, shape) -> Body:
         b = Body(bid, shape)
