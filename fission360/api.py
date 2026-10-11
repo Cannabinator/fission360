@@ -325,12 +325,27 @@ class Design:
                              "full_length": length is None},
                   {"length": length or "10 mm"})
 
-    def drawing(self, path: str, views=("front", "top", "right"), size="A3", hidden=True):
-        """Write an orthographic drawing sheet (.svg or .dxf) of all visible bodies."""
+    def drawing(self, path: str, views=("front", "top", "right"), size="A3", hidden=True, dims=None, bom=False):
+        """Write an orthographic drawing sheet (.svg or .dxf) of all visible bodies.
+
+        dims: extra dimensions, e.g. ``{"view": "front", "p1": (0, 0, 0), "p2": (25, 0, 0), "kind": "horizontal"}``
+        (kind: horizontal | vertical | aligned; optional "offset" in sheet mm and "text").
+        bom: add a parts list (components count as one item, mass from each body's material).
+        """
         from . import drawing
+        from .core.materials import MATERIALS
         bodies = self.doc.visible_bodies()
+        items = []
+        if bom:
+            groups: dict = {}
+            for b in bodies:
+                comp = self.doc.component_of(b.id)
+                key = comp or self.doc.body_name(b.id)
+                g = groups.setdefault(key, [0.0, self.doc.body_material(b.id)])
+                g[0] += K.mass_properties(b.shape, MATERIALS.get(self.doc.body_material(b.id), 7.85))["mass_g"]
+            items = [(k, v[1], v[0]) for k, v in groups.items()]
         return drawing.export_drawing(K.compound([b.shape for b in bodies]), path, self.doc.name, tuple(views), size,
-                                      hidden)
+                                      hidden, dims, items or None)
 
     def component(self, name: str, *bodies: Selection):
         """Group bodies into a named component (moves together under joints, exported as an assembly)."""

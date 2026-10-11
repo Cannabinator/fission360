@@ -15,9 +15,7 @@ from ..core import kernel as K
 from ..core.expressions import ExpressionError, format_angle, format_length, valid_param_name
 from .icons import icon
 
-MATERIALS = {"Steel": 7.85, "Stainless Steel": 8.0, "Aluminum 6061": 2.70, "Titanium": 4.43, "Copper": 8.96,
-             "Brass": 8.5, "ABS Plastic": 1.04, "PLA Plastic": 1.24, "Nylon": 1.15, "Wood (Oak)": 0.75,
-             "Glass": 2.5, "Concrete": 2.4}
+from ..core.materials import MATERIALS  # noqa: F401  (re-exported for the UI)
 
 
 # ---------------------------------------------------------------------------

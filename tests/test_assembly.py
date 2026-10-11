@@ -166,3 +166,22 @@ def test_drawing_centre_marks_callouts_and_section(tmp_path):
     svg = (tmp_path / "s.svg").read_text()
     assert "SECTION A-A" in svg and 'class="x"' in svg
     assert "HATCH" in (tmp_path / "s.dxf").read_text()
+
+
+def test_user_dimensions_and_bom(tmp_path):
+    d, a, b = two_blocks()
+    d.component("Cover", b)
+    d.joint(bottom(b), top(a))
+    dims = [{"view": "front", "p1": (0, 0, 0), "p2": (25, 0, 0), "kind": "horizontal"},
+            {"view": "front", "p1": (0, 0, 0), "p2": (30, 0, 40), "kind": "aligned", "offset": 6},
+            {"view": "top", "p1": (0, 0, 0), "p2": (0, 12, 0), "kind": "vertical", "text": "12 +-0.1"}]
+    sheet = d.drawing(str(tmp_path / "u.svg"), views=("front", "top"), dims=dims, bom=True)
+    d.drawing(str(tmp_path / "u.dxf"), views=("front", "top"), dims=dims, bom=True)
+    texts = [x.text for x in sheet.dims]
+    assert "25" in texts and "50" in texts and "12 +-0.1" in texts          # aligned = hypot(30, 40)
+    assert [r[1] for r in sheet.bom] == ["Body1", "Cover"] and all(r[4] > 0 for r in sheet.bom)
+    svg = (tmp_path / "u.svg").read_text()
+    assert "Material" in svg and "Cover" in svg and "12 +-0.1" in svg
+    assert "BOM" in (tmp_path / "u.dxf").read_text()
+    with pytest.raises(ValueError):
+        d.drawing(str(tmp_path / "x.svg"), views=("front",), dims=[{"view": "top", "p1": (0, 0, 0), "p2": (1, 0, 0)}])

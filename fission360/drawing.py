@@ -161,6 +161,7 @@ class Dim:
     b: tuple
     text: str
     vertical: bool = False
+    ext: list = field(default_factory=list)      # extension lines: ((x0, y0), (x1, y1)) in sheet mm
 
 
 @dataclass
@@ -170,6 +171,7 @@ class Sheet:
     placed: list           # (View, ox, oy) origin of the view's lower-left bound in sheet mm (y up)
     dims: list
     title: str
+    bom: list = field(default_factory=list)      # rows: (item, name, qty, material, mass_g)
 
 
 def section_shape(shape, y=None):
@@ -253,8 +255,45 @@ def _choose_layout(views: dict, size: str, margin=14.0, gap=24.0, title_h=26.0):
     return STANDARD_SCALES[0], STANDARD_SCALES[0][0] / STANDARD_SCALES[0][1]
 
 
+def user_dimension(view: View, ox: float, oy: float, s: float, spec: dict) -> Dim:
+    """A dimension between two model points (3-D) measured in one view.
+
+    spec: {"view": "front", "p1": (x, y, z), "p2": (x, y, z), "kind": "horizontal" | "vertical" | "aligned",
+           "offset": 10 (sheet mm, default 10), "text": optional override}
+    """
+    p1, p2 = _to_view(view.name, spec["p1"]), _to_view(view.name, spec["p2"])
+    a, b = p1 * s + (ox, oy), p2 * s + (ox, oy)
+    off = float(spec.get("offset", 10.0))
+    kind = spec.get("kind", "aligned")
+    if kind == "horizontal":
+        y = min(a[1], b[1]) - off
+        da, db, val, vert = (a[0], y), (b[0], y), abs(p2[0] - p1[0]), False
+    elif kind == "vertical":
+        x = max(a[0], b[0]) + off
+        da, db, val, vert = (x, a[1]), (x, b[1]), abs(p2[1] - p1[1]), True
+    else:
+        d = b - a
+        L = float(np.linalg.norm(d))
+        if L < 1e-9:
+            raise ValueError("dimension points coincide in this view")
+        nrm = np.array([-d[1], d[0]]) / L * off
+        da, db = tuple(a + nrm), tuple(b + nrm)
+        val, vert = float(np.linalg.norm(p2 - p1)), False
+    text = spec.get("text") or f"{val:.4g}"
+    return Dim(da, db, text, vert, [(tuple(a), da), (tuple(b), db)])
+
+
+def bom_rows(items) -> list:
+    """items: [(name, material, mass_g)] -> numbered rows with quantities (identical name+material+mass merge)."""
+    merged: dict = {}
+    for name, mat, mass in items:
+        key = (name, mat, round(mass, 2))
+        merged[key] = merged.get(key, 0) + 1
+    return [(i + 1, k[0], q, k[1], k[2]) for i, (k, q) in enumerate(merged.items())]
+
+
 def make_sheet(shape, name="Part", views=("front", "top", "right"), size="A3", hidden=True,
-               dimensions=True) -> Sheet:
+               dimensions=True, user_dims=None, bom=None) -> Sheet:
     vs = {v: (project_section(shape) if v == "section" else project(shape, v, hidden)) for v in views}
     if "iso" in vs:
         vs["iso"].hidden = []
@@ -289,7 +328,14 @@ def make_sheet(shape, name="Part", views=("front", "top", "right"), size="A3", h
             y0, y1 = lo[1] * s + oy, hi[1] * s + oy
             dims.append(Dim((x0, y0 - 7), (x1, y0 - 7), f"{(hi[0] - lo[0]):.4g}"))
             dims.append(Dim((x1 + 7, y0), (x1 + 7, y1), f"{(hi[1] - lo[1]):.4g}", vertical=True))
-    return Sheet(size, scale_t, placed, dims, name)
+    by_name = {v.name: (v, ox, oy) for v, ox, oy in placed}
+    sx = scale_t[0] / scale_t[1]
+    for spec in user_dims or []:
+        if spec["view"] not in by_name:
+            raise ValueError(f"dimension refers to view '{spec['view']}' which is not on the sheet")
+        v, ox, oy = by_name[spec["view"]]
+        dims.append(user_dimension(v, ox, oy, sx, spec))
+    return Sheet(size, scale_t, placed, dims, name, bom_rows(bom) if bom else [])
 
 
 # ---------------------------------------------------------------------------- SVG
@@ -329,6 +375,8 @@ def write_svg(sheet: Sheet, path: str, author: str = ""):
                    f'{view.title or view.name.upper()}</text></g>')
     for d in sheet.dims:
         (ax, ay), (bx, by) = d.a, d.b
+        for (e0, e1) in d.ext:
+            out.append(f'<line class="d" x1="{e0[0]:.2f}" y1="{Y(e0[1]):.2f}" x2="{e1[0]:.2f}" y2="{Y(e1[1]):.2f}"/>')
         out.append(f'<line class="d" x1="{ax:.2f}" y1="{Y(ay):.2f}" x2="{bx:.2f}" y2="{Y(by):.2f}"/>')
         for px, py in (d.a, d.b):
             t = 1.2
@@ -342,6 +390,20 @@ def write_svg(sheet: Sheet, path: str, author: str = ""):
                        f'text-anchor="middle">{escape(d.text)}</text>')
         else:
             out.append(f'<text class="t" x="{mx:.2f}" y="{Y(my) - 1.8:.2f}" text-anchor="middle">{escape(d.text)}</text>')
+    if sheet.bom:                                            # parts list, top right
+        cols = [(0, 8, "Item"), (8, 60, "Part"), (60, 72, "Qty"), (72, 112, "Material"), (112, 135, "Mass g")]
+        bw_, rh = 135, 6.0
+        x0, y0 = w - 7 - bw_, 7
+        out.append(f'<rect x="{x0}" y="{y0}" width="{bw_}" height="{rh * (len(sheet.bom) + 1)}" fill="white" '
+                   f'stroke="#111" stroke-width=".4"/>')
+        for r, row in enumerate([("Item", "Part", "Qty", "Material", "Mass g")] + [
+                (str(i), n, str(q), m, f"{g:.1f}") for i, n, q, m, g in sheet.bom]):
+            yy = y0 + r * rh
+            if r:
+                out.append(f'<line x1="{x0}" y1="{yy}" x2="{x0 + bw_}" y2="{yy}" stroke="#111" stroke-width=".2"/>')
+            for (c0, _c1, _), cell in zip(cols, row):
+                out.append(f'<text class="t" x="{x0 + c0 + 1.2}" y="{yy + 4.2}"'
+                           f'{" font-weight=\"bold\"" if r == 0 else ""}>{escape(cell)}</text>')
     # title block
     bx, by, bw, bh = w - 7 - 140, h - 7 - 26, 140, 26
     out.append(f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" fill="white" stroke="#111" stroke-width=".5"/>')
@@ -364,7 +426,8 @@ def write_dxf(sheet: Sheet, path: str):
          "0", "LTYPE", "2", "CONTINUOUS", "70", "0", "3", "Solid line", "72", "65", "73", "0", "40", "0.0",
          "0", "LTYPE", "2", "DASHED", "70", "0", "3", "Dashed", "72", "65", "73", "2", "40", "4.5", "49", "3.0", "49", "-1.5",
          "0", "ENDTAB",
-         "0", "TABLE", "2", "LAYER", "70", "5",
+         "0", "TABLE", "2", "LAYER", "70", "6",
+         "0", "LAYER", "2", "BOM", "70", "0", "62", "7", "6", "CONTINUOUS",
          "0", "LAYER", "2", "CENTER", "70", "0", "62", "1", "6", "DASHED",
          "0", "LAYER", "2", "HATCH", "70", "0", "62", "9", "6", "CONTINUOUS",
          "0", "LAYER", "2", "VISIBLE", "70", "0", "62", "7", "6", "CONTINUOUS",
@@ -392,18 +455,28 @@ def write_dxf(sheet: Sheet, path: str):
             o.extend(["0", "TEXT", "8", "DIMENSIONS", "10", f"{label[0] * s + ox + 0.8:.4f}", "20", f"{label[1] * s + oy:.4f}",
                       "30", "0.0", "40", "3.2", "1", text.replace("\u00d8", "%%c")])
     for d in sheet.dims:
+        for e0, e1 in d.ext:
+            pl([e0, e1], "DIMENSIONS")
         pl([d.a, d.b], "DIMENSIONS")
         mx, my = (d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2
         o.extend(["0", "TEXT", "8", "DIMENSIONS", "10", f"{mx:.4f}", "20", f"{my + 1:.4f}", "30", "0.0",
                   "40", "3.2", "1", d.text, "50", "90" if d.vertical else "0"])
+    if sheet.bom:
+        w, _h = SHEETS[sheet.size]
+        for r, row in enumerate([("Item", "Part", "Qty", "Material", "Mass g")] + [
+                (str(i), n, str(q), m, f"{g:.1f}") for i, n, q, m, g in sheet.bom]):
+            for c0, cell in zip((0, 8, 60, 72, 112), row):
+                o.extend(["0", "TEXT", "8", "BOM", "10", f"{w - 7 - 135 + c0 + 1.2:.3f}",
+                          "20", f"{_h - 7 - 6 * r - 4.2:.3f}", "30", "0.0", "40", "3.0", "1", cell])
     o.extend(["0", "ENDSEC", "0", "EOF"])
     with open(path, "w", encoding="latin-1") as fh:
         fh.write("\n".join(o) + "\n")
 
 
-def export_drawing(shape, path: str, name="Part", views=("front", "top", "right"), size="A3", hidden=True):
+def export_drawing(shape, path: str, name="Part", views=("front", "top", "right"), size="A3", hidden=True,
+                   user_dims=None, bom=None):
     """Write a drawing sheet; the extension picks the format (.svg or .dxf)."""
-    sheet = make_sheet(shape, name, views, size, hidden)
+    sheet = make_sheet(shape, name, views, size, hidden, True, user_dims, bom)
     if path.lower().endswith(".dxf"):
         write_dxf(sheet, path)
     else:

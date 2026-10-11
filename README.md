@@ -75,6 +75,7 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 - **Drawings** (File ▸ Export Drawing): front/top/right/iso views with exact hidden-line removal (hidden edges hidden behind visible ones are not doubled), automatic standard scale, overall dimensions and a title block, as SVG or layered DXF. Script: `design.drawing("part.svg", views=("front", "top", "right"))`.
 - **Joint motion**: right-click a joint in the timeline ▸ *Joint Motion / Limits...* for a slider, play/pause animation and min/max limits (angle or travel are clamped, with a warning). Script: `design.joint(..., limits=(-45, 60))`, `design.animate(joint, [0, 30, 60])`.
 - **Drawing extras**: section view A-A with 45° hatching (`views=(..., "section")`), centre marks, centre lines and Ø callouts for holes and bosses.
+- **Placed dimensions and parts list**: `design.drawing(path, dims=[{"view": "front", "p1": (0,0,0), "p2": (25,0,0), "kind": "horizontal"}], bom=True)` adds horizontal/vertical/aligned dimensions with extension lines (optional text override, e.g. tolerances) and a BOM table (components merged, mass from each body's material).
 - Script: `design.component("Lid", body)`, `design.joint(moving_face, fixed_face, kind="revolute", angle="30 deg")`.
 
 **Roadmap implementation (from the competitive analysis in `reports/`)**
@@ -137,5 +138,5 @@ fission360/
 
 ## Scope & roadmap
 
-Implemented from the roadmap: Phase 0 (robustness, diffable format) and Phase 1 (sketch tools, DXF/SVG, 3MF, threads, rib, variable fillet) plus from Phase 2 the scripting API and file versioning. Plus the first slice of Phase 2: joints, components with assembly STEP export, and 2D drawings. **Not yet implemented**: as-built joints and contact/collision during motion, user-placed drawing dimensions, detail views, BOM tables, full-round fillet, modeled (helical) threads, canvas images, thicken/stitch/surface tools, direct-edit face tools, sheet metal, CAM, simulation, rendering, T-splines. See `reports/Fission360 competitive gap analysis.md` for the full prioritised plan.
+Implemented from the roadmap: Phase 0 (robustness, diffable format) and Phase 1 (sketch tools, DXF/SVG, 3MF, threads, rib, variable fillet) plus from Phase 2 the scripting API and file versioning. Plus the first slice of Phase 2: joints, components with assembly STEP export, and 2D drawings. **Not yet implemented**: as-built joints and contact/collision during motion, a GUI for placing drawing dimensions, detail views, full-round fillet, modeled (helical) threads, canvas images, thicken/stitch/surface tools, direct-edit face tools, sheet metal, CAM, simulation, rendering, T-splines. See `reports/Fission360 competitive gap analysis.md` for the full prioritised plan.
 
