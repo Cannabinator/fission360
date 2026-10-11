@@ -848,8 +848,10 @@ def _exec_flange(doc, f, state):
         bid, face = R.resolve_face(state, ref)
         h, ang, rad = doc.val(f, "height"), doc.val(f, "angle"), doc.val(f, "radius")
         k = doc.val(f, "k_factor", 0.44)
-        if h < 0 or not 0 < ang < math.pi - 1e-6 or rad < 0:
+        if h < 0 or not 0 < ang <= math.pi + 1e-9 or rad < 0:
             raise K.KernelError("height, bend angle (0..180 deg) and radius must be valid")
+        if ang > math.pi - 1e-6 and rad <= 1e-9:
+            raise K.KernelError("a 180 deg hem needs a bend radius greater than zero")
         solid, rec = SM.make_flange(face, h, ang, rad, k, f.data.get("side", "plus") == "plus", state.sheet,
                                    doc.val(f, "gap_start", 0.0), doc.val(f, "gap_end", 0.0))
         rec["feature"] = f.id

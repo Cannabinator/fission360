@@ -120,3 +120,26 @@ def test_adjacent_flanges_with_reliefs_do_not_overlap():
     d.flange(side_face(p, (0, 1, 0)), height="10 mm", radius=f"{r} mm", gap_start=f"{t + r} mm")
     d.flange(side_face(d.bodies[0], (1, 0, 0)), height="10 mm", radius=f"{r} mm", gap_end=f"{t + r} mm")
     assert len(K.solids(d.bodies[0].shape)) == 1 and len(d.doc.state.sheet) == 2
+
+
+def test_hem_folds_edge_back(tmp_path):
+    d = Design()
+    p = plate(d, 60, 40, 2)
+    v0 = K.mass_properties(p.shape)["volume_mm3"]
+    d.hem(side_face(p, (0, 1, 0)), length="10 mm", gap="2 mm")      # R = 1 mm
+    s = d.bodies[0].shape
+    lo, hi = K.bbox(s)
+    assert hi[2] == pytest.approx(2 + 2 * 1 + 2, abs=1e-3)           # plate t + gap + leg t above the bottom
+    assert len(K.solids(s)) == 1
+    vol = K.mass_properties(s)["volume_mm3"]
+    bend = math.pi * ((3 ** 2 - 1 ** 2) / 2) * 60
+    assert vol == pytest.approx(v0 + bend + 60 * 2 * 10, rel=1e-3)
+    size = d.flat_pattern(str(tmp_path / "h.dxf"))
+    assert sorted(size) == pytest.approx(sorted([60.0, 40 + math.pi * (1 + 0.44 * 2) + 10]), abs=1e-3)
+
+
+def test_zero_radius_hem_is_rejected():
+    d = Design()
+    p = plate(d)
+    with pytest.raises(DesignError, match="radius"):
+        d.hem(side_face(p, (0, 1, 0)), gap="0 mm")

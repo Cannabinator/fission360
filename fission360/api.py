@@ -354,6 +354,10 @@ class Design:
                   {"height": height, "angle": angle, "radius": radius, "k_factor": k_factor,
                    "gap_start": gap_start, "gap_end": gap_end})
 
+    def hem(self, face, length="8 mm", gap="1 mm", flip=False, **kw):
+        """Fold the sheet edge back on itself (180 deg bend); ``gap`` is the opening between the layers."""
+        self.flange(face, height=length, angle="180 deg", radius=f"({gap}) / 2", flip=flip, **kw)
+
     def flat_pattern(self, path: str, body: Selection | None = None):
         """Write the unfolded sheet as DXF (CUT and BEND layers); returns the developed bounding size."""
         from .core import sheetmetal as SM
