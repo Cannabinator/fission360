@@ -165,3 +165,31 @@ def test_render_image_offscreen(tmp_path, monkeypatch):
     assert "#ffffff" in px and len(px) > 3          # white background plus shaded body
     win.doc.modified = False
     win.close()
+
+
+def test_render_image_ground_shadow(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from PySide6.QtGui import QSurfaceFormat
+    from PySide6.QtWidgets import QApplication
+    fmt = QSurfaceFormat()
+    fmt.setVersion(3, 3)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
+    QSurfaceFormat.setDefaultFormat(fmt)
+    app = QApplication.instance() or QApplication([])
+    from fission360.api import Design
+    from fission360.ui.main_window import MainWindow
+    win = MainWindow()
+    win.show()
+    Design(win.doc).box(0, 0, 20, 20, 30)
+    win.refresh_all()
+    win.viewport.fit_all()
+    app.processEvents()
+    on = win.viewport.render_image(640, 360, "white", shadows=True)
+    off = win.viewport.render_image(640, 360, "white", shadows=False)
+
+    def dark(img):
+        return sum(1 for x in range(0, 640, 4) for y in range(0, 360, 4) if img.pixelColor(x, y).red() < 235)
+
+    assert dark(on) > dark(off) + 200          # the cast shadow darkens a large ground area
+    win.doc.modified = False
+    win.close()

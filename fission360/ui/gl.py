@@ -261,6 +261,50 @@ void main() { o_color = vec4(mix(u_bottom, u_top, v_uv.y), 1.0); }
 """
 
 
+SHADOW_FS = """
+#version 330 core
+void main() {}
+"""
+
+GROUND_VS = """
+#version 330 core
+layout(location=0) in vec3 a_pos;
+uniform mat4 u_mvp;
+uniform mat4 u_light;
+out vec4 v_lpos;
+out vec3 v_wpos;
+void main() {
+    v_wpos = a_pos;
+    v_lpos = u_light * vec4(a_pos, 1.0);
+    gl_Position = u_mvp * vec4(a_pos, 1.0);
+}
+"""
+
+GROUND_FS = """
+#version 330 core
+in vec4 v_lpos;
+in vec3 v_wpos;
+uniform sampler2D u_shadow;
+uniform float u_texel;
+uniform float u_strength;
+uniform vec3 u_center;
+uniform float u_radius;
+out vec4 o_color;
+void main() {
+    vec3 p = v_lpos.xyz / v_lpos.w * 0.5 + 0.5;
+    float lit = 0.0;
+    for (int x = -3; x <= 3; x++)
+        for (int y = -3; y <= 3; y++) {
+            float d = texture(u_shadow, p.xy + vec2(x, y) * u_texel * 1.5).r;
+            lit += (p.z - 0.0015 > d) ? 0.0 : 1.0;
+        }
+    lit /= 49.0;
+    float fade = 1.0 - smoothstep(u_radius * 1.2, u_radius * 3.5, length(v_wpos.xy - u_center.xy));
+    o_color = vec4(0.04, 0.05, 0.08, (1.0 - lit) * u_strength * fade);
+}
+"""
+
+
 def _compile(src, kind):
     sh = GL.glCreateShader(kind)
     GL.glShaderSource(sh, src)
@@ -500,6 +544,10 @@ class Renderer:
         self.tri = Program(TRI_VS, TRI_FS)
         self.tri_pick = Program(TRI_VS, PICK_POINT_FS.replace("v_id", "v_id"))
         self.bg = Program(BG_VS, BG_FS)
+        self.shadow_prog = Program(MESH_VS, SHADOW_FS)
+        self.ground_prog = Program(GROUND_VS, GROUND_FS)
+        self._shadow = None
+        self._ground_vao = None
         self.empty_vao = GL.glGenVertexArrays(1)
         self.pick_fbo = None
         self.pick_size = (0, 0)
@@ -542,6 +590,90 @@ class Renderer:
         gpu.tris.draw(GL.GL_TRIANGLES)
         GL.glDepthMask(GL.GL_TRUE)
         GL.glDisable(GL.GL_POLYGON_OFFSET_FILL)
+
+    SHADOW_SIZE = 4096
+
+    def _ensure_shadow(self):
+        if self._shadow is not None:
+            return
+        n = self.SHADOW_SIZE
+        prev = GL.glGetIntegerv(GL.GL_FRAMEBUFFER_BINDING)
+        tex = GL.glGenTextures(1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_DEPTH_COMPONENT24, n, n, 0, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT, None)
+        for k, v in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST), (GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST),
+                     (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_BORDER), (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_BORDER)):
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, k, v)
+        GL.glTexParameterfv(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_BORDER_COLOR, [1.0, 1.0, 1.0, 1.0])
+        fbo = GL.glGenFramebuffers(1)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)
+        GL.glFramebufferTexture2D(GL.GL_FRAMEBUFFER, GL.GL_DEPTH_ATTACHMENT, GL.GL_TEXTURE_2D, tex, 0)
+        GL.glDrawBuffer(GL.GL_NONE)
+        GL.glReadBuffer(GL.GL_NONE)
+        self._shadow = (fbo, tex)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev)
+        quad = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, -1, 0], [1, 1, 0], [-1, 1, 0]], np.float32)
+        self._ground_vao = GL.glGenVertexArrays(1)
+        vbo = GL.glGenBuffers(1)
+        GL.glBindVertexArray(self._ground_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, quad.nbytes, quad, GL.GL_STATIC_DRAW)
+        GL.glEnableVertexAttribArray(0)
+        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 12, None)
+        GL.glBindVertexArray(0)
+
+    def draw_ground_shadow(self, gpus, mvp, center, radius, z_floor, light_dir, strength=0.55):
+        """Shadow-mapped soft shadow on a transparent ground plane at ``z_floor`` (render export only)."""
+        self._ensure_shadow()
+        fbo, tex = self._shadow
+        n = self.SHADOW_SIZE
+        l = np.asarray(light_dir, float)
+        l /= np.linalg.norm(l)
+        eye = np.asarray(center, float) + l * radius * 4
+        f = -l
+        up = np.array([0, 1.0, 0]) if abs(f[1]) < 0.9 else np.array([1.0, 0, 0])
+        s = np.cross(f, up)
+        s /= np.linalg.norm(s)
+        u = np.cross(s, f)
+        view = np.eye(4)
+        view[0, :3], view[1, :3], view[2, :3] = s, u, -f
+        view[:3, 3] = -view[:3, :3] @ eye
+        h = radius * 1.6
+        proj = np.diag([1 / h, 1 / h, -2 / (radius * 8), 1.0])
+        proj[2, 3] = -1.0
+        light = proj @ view
+        prev_fbo = GL.glGetIntegerv(GL.GL_FRAMEBUFFER_BINDING)
+        prev_vp = GL.glGetIntegerv(GL.GL_VIEWPORT)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)
+        GL.glViewport(0, 0, n, n)
+        GL.glClear(GL.GL_DEPTH_BUFFER_BIT)
+        p = self.shadow_prog.use()
+        p.m4("u_mvp", light)
+        p.m4("u_view", np.eye(4))
+        p.v4("u_clip", np.array([0, 0, 0, 1.0]))
+        GL.glDisable(GL.GL_BLEND)
+        for g in gpus:
+            g.tris.draw(GL.GL_TRIANGLES)
+        GL.glEnable(GL.GL_BLEND)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
+        GL.glViewport(*[int(v) for v in prev_vp])
+        g = self.ground_prog.use()
+        g.m4("u_mvp", mvp @ np.array([[radius * 6, 0, 0, center[0]], [0, radius * 6, 0, center[1]],
+                                      [0, 0, 1, z_floor - 0.01 * radius], [0, 0, 0, 1.0]]))
+        g.m4("u_light", light @ np.array([[radius * 6, 0, 0, center[0]], [0, radius * 6, 0, center[1]],
+                                          [0, 0, 1, z_floor - 0.01 * radius], [0, 0, 0, 1.0]]))
+        GL.glActiveTexture(GL.GL_TEXTURE0)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+        g.i("u_shadow", 0)
+        g.f("u_texel", 1.0 / n)
+        g.f("u_strength", strength)
+        g.v3("u_center", center)
+        g.f("u_radius", radius)
+        GL.glDepthMask(GL.GL_FALSE)
+        GL.glBindVertexArray(self._ground_vao)
+        GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
+        GL.glBindVertexArray(0)
+        GL.glDepthMask(GL.GL_TRUE)
 
     def draw_faces_flat(self, gpu: BodyGPU, mvp, view, faces, color, alpha=0.6):
         p = self.mesh.use()

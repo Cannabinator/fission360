@@ -471,7 +471,7 @@ class Viewport(QOpenGLWidget):
         p.end()
         self.fps_ms = (time.perf_counter() - t0) * 1000
 
-    def render_image(self, width: int, height: int, background="gradient", samples=4):
+    def render_image(self, width: int, height: int, background="gradient", samples=4, shadows=True):
         """Render the model (no grid, origin, sketches, selection or UI) into an image of any size."""
         from PySide6.QtGui import QImage
         from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
@@ -491,6 +491,7 @@ class Viewport(QOpenGLWidget):
                 THEME.bg_top = THEME.bg_bottom = (1.0, 1.0, 1.0)
             self.cam.width, self.cam.height = self.width(), self.width() * height / width
             self._rendering_clean = True
+            self._render_shadows = shadows
             self._paint_scene(int(width), int(height), width / max(self.width(), 1))
             img = fbo.toImage()
             fbo.release()
@@ -569,6 +570,16 @@ class Viewport(QOpenGLWidget):
 
         # construction planes
         if getattr(self, "_rendering_clean", False):
+            if getattr(self, "_render_shadows", False) and doc is not None:
+                gpus = [self.gpu[b.id][1] for b in self.vstate.bodies.values()
+                        if doc.body_visible(b.id) and b.id not in self.hidden_bodies and b.id in self.gpu]
+                shapes = [b.shape for b in self.vstate.bodies.values() if doc.body_visible(b.id) and b.id in self.gpu]
+                if gpus and shapes:
+                    lo, hi = K.bbox(K.compound(shapes))
+                    c = (lo + hi) / 2
+                    rad = max(float(np.linalg.norm(hi - lo)) / 2, 1.0)
+                    GL.glDisable(GL.GL_CLIP_DISTANCE0)
+                    r.draw_ground_shadow(gpus, mvp, c, rad, float(lo[2]), (0.6, 0.5, 0.9))
             GL.glDisable(GL.GL_CLIP_DISTANCE0)
             return
         r.draw_tris(self.plane_batch, mvp, self._hover_local("plane"))

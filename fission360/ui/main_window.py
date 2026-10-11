@@ -979,11 +979,14 @@ class MainWindow(QMainWindow):
         bg, ok = QInputDialog.getItem(self, "Render image", "Background:", ["Studio gradient", "White"], 0, False)
         if not ok:
             return
+        shadow, ok = QInputDialog.getItem(self, "Render image", "Ground shadow:", ["Soft shadow", "None"], 0, False)
+        if not ok:
+            return
         path, _ = QFileDialog.getSaveFileName(self, "Save image", f"{self.doc.name}.png", "PNG image (*.png);;JPEG (*.jpg)")
         if not path:
             return
         w, h = self.RENDER_SIZES[size]
-        img = self.viewport.render_image(w, h, "white" if bg == "White" else "gradient")
+        img = self.viewport.render_image(w, h, "white" if bg == "White" else "gradient", shadows=shadow != "None")
         if img.isNull() or not img.save(path):
             QMessageBox.warning(self, "Render", "Could not render or save the image")
         else:
