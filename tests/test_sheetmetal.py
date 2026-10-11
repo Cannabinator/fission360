@@ -93,3 +93,30 @@ def test_flange_on_flange_chain_and_flat_pattern(tmp_path):
     ba1, ba2 = (math.pi / 2) * (3 + 0.44 * 2), (math.pi / 2) * (2 + 0.44 * 2)
     assert sorted(size) == pytest.approx(sorted([60.0, 40 + ba1 + 15 + ba2 + 10]), abs=1e-3)
     assert (tmp_path / "c.dxf").read_text().count("BEND") >= 3          # layer table + two bend lines
+
+
+def test_corner_relief_gaps_trim_flange_and_flat_pattern(tmp_path):
+    d = Design()
+    p = plate(d, 60, 40, 2)
+    d.flange(side_face(p, (0, 1, 0)), height="10 mm", radius="2 mm", gap_start="4 mm", gap_end="6 mm")
+    b = d.doc.state.sheet[0]
+    assert b["length"] == pytest.approx(50)
+    lo, hi = K.bbox(d.bodies[0].shape)
+    # the wall spans x = 4 .. 54 only; the plate itself still spans 0 .. 60
+    wall_x = [K.face_info(f)["center"][0] for f in K.faces(d.bodies[0].shape)
+              if K.face_info(f)["type"] == "plane" and K.face_info(f)["center"][2] > 6]
+    assert min(wall_x) > 3.9 and max(wall_x) < 54.1
+    assert len(K.solids(d.bodies[0].shape)) == 1
+    d.flat_pattern(str(tmp_path / "r.dxf"))
+    txt = (tmp_path / "r.dxf").read_text()
+    assert "BEND" in txt
+
+
+def test_adjacent_flanges_with_reliefs_do_not_overlap():
+    d = Design()
+    p = plate(d, 60, 40, 2)
+    t = 2
+    r = 2
+    d.flange(side_face(p, (0, 1, 0)), height="10 mm", radius=f"{r} mm", gap_start=f"{t + r} mm")
+    d.flange(side_face(d.bodies[0], (1, 0, 0)), height="10 mm", radius=f"{r} mm", gap_end=f"{t + r} mm")
+    assert len(K.solids(d.bodies[0].shape)) == 1 and len(d.doc.state.sheet) == 2

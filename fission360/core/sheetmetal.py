@@ -45,11 +45,13 @@ def edge_face_frame(face):
         u0, w0 = w0, -u0
         length, t = t, length
     if w0[int(np.argmax(np.abs(w0)))] < 0:        # "plus" = towards positive world axes, so it is predictable
-        w0, u0 = -w0, -u0
+        w0 = -w0
+    if u0[int(np.argmax(np.abs(u0)))] < 0:        # edge direction too, so "start" is the low end of the edge
+        u0 = -u0
     return o, w0, u0, t, length, c
 
 
-def make_flange(face, height, angle, radius, k_factor=0.44, toward_plus=True, previous=()):
+def make_flange(face, height, angle, radius, k_factor=0.44, toward_plus=True, previous=(), gap_start=0.0, gap_end=0.0):
     """Bent flange solid + bend record for the given sheet edge face."""
     o, w, u, t, length, c = edge_face_frame(face)
     if not toward_plus:
@@ -76,8 +78,19 @@ def make_flange(face, height, angle, radius, k_factor=0.44, toward_plus=True, pr
         if np.linalg.norm(c - np.array(pb["end_center"])) < max(0.05 * t, 0.01) and \
                 float(np.dot(o, pb["end_normal"])) > 0.999:
             parent = i
+    cl = length
+    if gap_start > 1e-9 or gap_end > 1e-9:
+        # corner relief: leave a gap at either end of the bend by trimming the flange to a slab along the edge
+        if gap_start + gap_end >= length - 1e-6:
+            raise K.KernelError("the end gaps leave no flange")
+        big = (height + radius + t) * 4 + length + 50
+        ax = K.Frame(c + u * (-length / 2 + gap_start), w, u)           # normal along the edge direction
+        slab = K.box(ax, -big, -big, 2 * big, 2 * big, length - gap_start - gap_end)
+        solid = K.common(solid, slab)
+        cl = length - gap_start - gap_end
+        c = c + u * (gap_start - gap_end) / 2
     rec = {"parent": parent, "end_center": tip["center"], "end_normal": [float(x) for x in tdir],
-           "origin": c.tolist(), "outward": o.tolist(), "edge": u.tolist(), "length": length, "thickness": t,
+           "origin": c.tolist(), "outward": o.tolist(), "edge": u.tolist(), "length": cl, "thickness": t,
            "angle": angle, "radius": radius, "height": height, "k": k_factor}
     return solid, rec
 
@@ -144,8 +157,13 @@ def flat_pattern(shape, bends: list):
     base_segs = [(p["a"], p["z"]) for p, b in zip(placed, bends) if b.get("parent") is None]
     for e in K.edges(base):
         pl = np.array([to2(p) for p in K.edge_polyline(e, 0.05)])
-        if len(pl) >= 2 and not any(_same_seg(pl[0], pl[-1], a, z) for a, z in base_segs):
-            cuts.append(pl)
+        if len(pl) < 2:
+            continue
+        pieces = [pl]
+        if len(pl) == 2:                                  # straight edge: remove the part covered by a bend line
+            for a, z in base_segs:
+                pieces = [q for pc in pieces for q in _minus_segment(pc, a, z)]
+        cuts += pieces
     for i, (p, b) in enumerate(zip(placed, bends)):
         bend_lines.append(np.array([p["a"], p["z"]]))
         cuts += [np.array([p["a"], p["far_a"]]), np.array([p["z"], p["far_z"]])]
@@ -153,6 +171,26 @@ def flat_pattern(shape, bends: list):
         if not has_child:
             cuts.append(np.array([p["far_a"], p["far_z"]]))
     return cuts, bend_lines
+
+
+def _minus_segment(pc, a, z, tol=0.05):
+    """The parts of the straight 2-point polyline ``pc`` not covered by the collinear segment a-z."""
+    p0, p1 = pc[0], pc[1]
+    d = p1 - p0
+    L = float(np.linalg.norm(d))
+    if L < 1e-9:
+        return []
+    d = d / L
+    n = np.array([-d[1], d[0]])
+    if abs(float((a - p0) @ n)) > tol or abs(float((z - p0) @ n)) > tol:
+        return [pc]
+    t0, t1 = sorted([float((a - p0) @ d), float((z - p0) @ d)])
+    out = []
+    if t0 > tol:
+        out.append(np.array([p0, p0 + d * min(t0, L)]))
+    if t1 < L - tol:
+        out.append(np.array([p0 + d * max(t1, 0), p1]))
+    return out
 
 
 def _same_seg(p0, p1, a, z, tol=0.05):

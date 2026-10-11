@@ -347,10 +347,12 @@ class Design:
         return drawing.export_drawing(K.compound([b.shape for b in bodies]), path, self.doc.name, tuple(views), size,
                                       hidden, dims, items or None)
 
-    def flange(self, face, height="15 mm", angle="90 deg", radius="2 mm", k_factor="0.44", flip=False):
+    def flange(self, face, height="15 mm", angle="90 deg", radius="2 mm", k_factor="0.44", flip=False,
+               gap_start="0 mm", gap_end="0 mm"):
         """Bend a wall up from a sheet's edge face (reference from ``Selection.faces``)."""
         self._add("flange", default_data("flange") | {"face": self._face_refs(face), "side": "minus" if flip else "plus"},
-                  {"height": height, "angle": angle, "radius": radius, "k_factor": k_factor})
+                  {"height": height, "angle": angle, "radius": radius, "k_factor": k_factor,
+                   "gap_start": gap_start, "gap_end": gap_end})
 
     def flat_pattern(self, path: str, body: Selection | None = None):
         """Write the unfolded sheet as DXF (CUT and BEND layers); returns the developed bounding size."""

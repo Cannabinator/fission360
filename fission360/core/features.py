@@ -90,6 +90,8 @@ FEATURE_TYPES: dict[str, dict] = {
         F("angle", "Bend Angle", "angle", "90 deg"),
         F("radius", "Bend Radius", "length", "2 mm"),
         F("k_factor", "K-Factor", "scalar", "0.44", tip="Neutral-axis position in the bend (0.3 .. 0.5)"),
+        F("gap_start", "Relief Gap (start)", "length", "0 mm", tip="Leave a gap at the start of the bend (corner relief)"),
+        F("gap_end", "Relief Gap (end)", "length", "0 mm", tip="Leave a gap at the end of the bend (corner relief)"),
         F("side", "Bend Direction", "choice", "plus", ["plus", "minus"],
           tip="Which way the wall bends across the sheet thickness; flip it if it goes the wrong way"),
     ]},
@@ -848,7 +850,8 @@ def _exec_flange(doc, f, state):
         k = doc.val(f, "k_factor", 0.44)
         if h < 0 or not 0 < ang < math.pi - 1e-6 or rad < 0:
             raise K.KernelError("height, bend angle (0..180 deg) and radius must be valid")
-        solid, rec = SM.make_flange(face, h, ang, rad, k, f.data.get("side", "plus") == "plus", state.sheet)
+        solid, rec = SM.make_flange(face, h, ang, rad, k, f.data.get("side", "plus") == "plus", state.sheet,
+                                   doc.val(f, "gap_start", 0.0), doc.val(f, "gap_end", 0.0))
         rec["feature"] = f.id
         shape = K.fuse(state.bodies[bid].shape, solid)
         _store_result(state, bid, shape)
