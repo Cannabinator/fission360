@@ -32,9 +32,13 @@ uniform vec4 u_clip;
 flat out uint v_id;
 out vec3 v_nrm;
 out vec3 v_vpos;
+out vec3 v_wpos;
+out vec3 v_wnrm;
 void main() {
     gl_Position = u_mvp * vec4(a_pos, 1.0);
     gl_ClipDistance[0] = dot(vec4(a_pos, 1.0), u_clip);
+    v_wpos = a_pos;
+    v_wnrm = a_nrm;
     v_nrm = mat3(u_view) * a_nrm;
     v_vpos = (u_view * vec4(a_pos, 1.0)).xyz;
     v_id = a_id;
@@ -45,7 +49,14 @@ MESH_FS = """
 #version 330 core
 in vec3 v_nrm;
 in vec3 v_vpos;
+in vec3 v_wpos;
+in vec3 v_wnrm;
 flat in uint v_id;
+uniform int u_shadow_on;         // render export: key light from u_key (view space) with a shadow map
+uniform sampler2D u_shadow_map;
+uniform mat4 u_light;
+uniform vec3 u_key;
+uniform vec3 u_key_world;
 uniform vec3 u_color;
 uniform float u_alpha;
 uniform int u_hl_face;          // hovered face (local index) or -1
@@ -60,6 +71,23 @@ void main() {
     vec3 v = normalize(-v_vpos);
     if (!gl_FrontFacing) n = -n;
     vec3 l1 = normalize(vec3(0.35, 0.55, 0.75));
+    float sh = 1.0;
+    if (u_shadow_on == 1) {
+        l1 = normalize(u_key);
+        vec4 lp = u_light * vec4(v_wpos, 1.0);
+        vec3 sp = lp.xyz / lp.w * 0.5 + 0.5;
+        vec3 nw = normalize(v_wnrm);
+        if (!gl_FrontFacing) nw = -nw;
+        float cosT = clamp(dot(nw, normalize(u_key_world)), 0.0, 1.0);
+        float bias = 0.0012 + 0.004 * (1.0 - cosT);
+        float lit = 0.0;
+        for (int x = -1; x <= 1; x++)
+            for (int y = -1; y <= 1; y++) {
+                float d = texture(u_shadow_map, sp.xy + vec2(x, y) / 4096.0 * 1.2).r;
+                lit += (sp.z - bias > d) ? 0.0 : 1.0;
+            }
+        sh = mix(0.0, lit / 9.0, step(0.0, cosT) );
+    }
     vec3 l2 = normalize(vec3(-0.6, -0.2, 0.45));
     float d1 = max(dot(n, l1), 0.0);
     float d2 = max(dot(n, l2), 0.0);
@@ -68,7 +96,7 @@ void main() {
     float hemi = 0.5 + 0.5 * n.y;
     vec3 amb = mix(vec3(0.20, 0.20, 0.22), vec3(0.34, 0.35, 0.38), hemi);
     float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.18;
-    vec3 c = base * (amb + d1 * 0.62 + d2 * 0.22) + vec3(s1 * 0.28) + vec3(rim);
+    vec3 c = base * (amb + d1 * sh * 0.62 + d2 * 0.22) + vec3(s1 * sh * 0.28) + vec3(rim);
     o_color = vec4(pow(c, vec3(1.0/1.08)), u_alpha);
 }
 """
@@ -548,6 +576,7 @@ class Renderer:
         self.ground_prog = Program(GROUND_VS, GROUND_FS)
         self._shadow = None
         self._ground_vao = None
+        self.shadow_active = False
         self.empty_vao = GL.glGenVertexArrays(1)
         self.pick_fbo = None
         self.pick_size = (0, 0)
@@ -583,6 +612,15 @@ class Renderer:
         p.i("u_hl_face", hl_face)
         p.v3("u_hl_color", hl_color)
         p.i("u_flat", 0)
+        p.i("u_shadow_on", 1 if self.shadow_active else 0)
+        if self.shadow_active:
+            GL.glActiveTexture(GL.GL_TEXTURE1)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._shadow[1])
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            p.i("u_shadow_map", 1)
+            p.m4("u_light", self._light)
+            p.v3("u_key", np.asarray(view)[:3, :3] @ self._light_dir)
+            p.v3("u_key_world", self._light_dir)
         GL.glEnable(GL.GL_POLYGON_OFFSET_FILL)
         GL.glPolygonOffset(1.0, 1.0)
         if alpha < 1.0:
@@ -622,8 +660,8 @@ class Renderer:
         GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 12, None)
         GL.glBindVertexArray(0)
 
-    def draw_ground_shadow(self, gpus, mvp, center, radius, z_floor, light_dir, strength=0.55):
-        """Shadow-mapped soft shadow on a transparent ground plane at ``z_floor`` (render export only)."""
+    def prepare_shadow(self, gpus, center, radius, light_dir):
+        """Render the shadow map; subsequent ``draw_body`` calls shade with the key light and receive shadows."""
         self._ensure_shadow()
         fbo, tex = self._shadow
         n = self.SHADOW_SIZE
@@ -641,14 +679,15 @@ class Renderer:
         h = radius * 1.6
         proj = np.diag([1 / h, 1 / h, -2 / (radius * 8), 1.0])
         proj[2, 3] = -1.0
-        light = proj @ view
+        self._light = proj @ view
+        self._light_dir = l
         prev_fbo = GL.glGetIntegerv(GL.GL_FRAMEBUFFER_BINDING)
         prev_vp = GL.glGetIntegerv(GL.GL_VIEWPORT)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)
         GL.glViewport(0, 0, n, n)
         GL.glClear(GL.GL_DEPTH_BUFFER_BIT)
         p = self.shadow_prog.use()
-        p.m4("u_mvp", light)
+        p.m4("u_mvp", self._light)
         p.m4("u_view", np.eye(4))
         p.v4("u_clip", np.array([0, 0, 0, 1.0]))
         GL.glDisable(GL.GL_BLEND)
@@ -657,15 +696,23 @@ class Renderer:
         GL.glEnable(GL.GL_BLEND)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
         GL.glViewport(*[int(v) for v in prev_vp])
+        self.shadow_active = True
+
+    def end_shadow(self):
+        self.shadow_active = False
+
+    def draw_ground(self, mvp, center, radius, z_floor, strength=0.55):
+        """Transparent ground plane that only shows the cast shadow (needs ``prepare_shadow``)."""
+        fbo, tex = self._shadow
+        m = np.array([[radius * 6, 0, 0, center[0]], [0, radius * 6, 0, center[1]],
+                      [0, 0, 1, z_floor - 0.01 * radius], [0, 0, 0, 1.0]])
         g = self.ground_prog.use()
-        g.m4("u_mvp", mvp @ np.array([[radius * 6, 0, 0, center[0]], [0, radius * 6, 0, center[1]],
-                                      [0, 0, 1, z_floor - 0.01 * radius], [0, 0, 0, 1.0]]))
-        g.m4("u_light", light @ np.array([[radius * 6, 0, 0, center[0]], [0, radius * 6, 0, center[1]],
-                                          [0, 0, 1, z_floor - 0.01 * radius], [0, 0, 0, 1.0]]))
+        g.m4("u_mvp", mvp @ m)
+        g.m4("u_light", self._light @ m)
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
         g.i("u_shadow", 0)
-        g.f("u_texel", 1.0 / n)
+        g.f("u_texel", 1.0 / self.SHADOW_SIZE)
         g.f("u_strength", strength)
         g.v3("u_center", center)
         g.f("u_radius", radius)

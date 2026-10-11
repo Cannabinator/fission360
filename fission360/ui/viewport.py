@@ -511,6 +511,17 @@ class Viewport(QOpenGLWidget):
         view = self.cam.view_matrix()
         vp = (W, H)
 
+        shadow_info = None
+        if getattr(self, "_rendering_clean", False) and getattr(self, "_render_shadows", False) and self.doc is not None:
+            vis = [bb for bb in self.vstate.bodies.values()
+                   if self.doc.body_visible(bb.id) and bb.id not in self.hidden_bodies and bb.id in self.gpu]
+            if vis:
+                lo, hi = K.bbox(K.compound([bb.shape for bb in vis]))
+                c = (lo + hi) / 2
+                rad = max(float(np.linalg.norm(hi - lo)) / 2, 1.0)
+                r.prepare_shadow([self.gpu[bb.id][1] for bb in vis], c, rad, (0.6, 0.5, 0.9))
+                shadow_info = (c, rad, float(lo[2]))
+
         # grid
         frame = self.sketch_ctx[2] if self.sketch_ctx else K.ORIGIN_FRAMES["XY"]
         if self.show_grid:
@@ -570,16 +581,10 @@ class Viewport(QOpenGLWidget):
 
         # construction planes
         if getattr(self, "_rendering_clean", False):
-            if getattr(self, "_render_shadows", False) and doc is not None:
-                gpus = [self.gpu[b.id][1] for b in self.vstate.bodies.values()
-                        if doc.body_visible(b.id) and b.id not in self.hidden_bodies and b.id in self.gpu]
-                shapes = [b.shape for b in self.vstate.bodies.values() if doc.body_visible(b.id) and b.id in self.gpu]
-                if gpus and shapes:
-                    lo, hi = K.bbox(K.compound(shapes))
-                    c = (lo + hi) / 2
-                    rad = max(float(np.linalg.norm(hi - lo)) / 2, 1.0)
-                    GL.glDisable(GL.GL_CLIP_DISTANCE0)
-                    r.draw_ground_shadow(gpus, mvp, c, rad, float(lo[2]), (0.6, 0.5, 0.9))
+            if shadow_info is not None:
+                GL.glDisable(GL.GL_CLIP_DISTANCE0)
+                r.draw_ground(mvp, *shadow_info)
+                r.end_shadow()
             GL.glDisable(GL.GL_CLIP_DISTANCE0)
             return
         r.draw_tris(self.plane_batch, mvp, self._hover_local("plane"))
