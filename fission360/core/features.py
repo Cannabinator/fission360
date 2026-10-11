@@ -848,7 +848,7 @@ def _exec_flange(doc, f, state):
         k = doc.val(f, "k_factor", 0.44)
         if h < 0 or not 0 < ang < math.pi - 1e-6 or rad < 0:
             raise K.KernelError("height, bend angle (0..180 deg) and radius must be valid")
-        solid, rec = SM.make_flange(face, h, ang, rad, k, f.data.get("side", "plus") == "plus")
+        solid, rec = SM.make_flange(face, h, ang, rad, k, f.data.get("side", "plus") == "plus", state.sheet)
         rec["feature"] = f.id
         shape = K.fuse(state.bodies[bid].shape, solid)
         _store_result(state, bid, shape)

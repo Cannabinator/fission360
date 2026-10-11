@@ -49,7 +49,7 @@ def edge_face_frame(face):
     return o, w0, u0, t, length, c
 
 
-def make_flange(face, height, angle, radius, k_factor=0.44, toward_plus=True):
+def make_flange(face, height, angle, radius, k_factor=0.44, toward_plus=True, previous=()):
     """Bent flange solid + bend record for the given sheet edge face."""
     o, w, u, t, length, c = edge_face_frame(face)
     if not toward_plus:
@@ -68,7 +68,16 @@ def make_flange(face, height, angle, radius, k_factor=0.44, toward_plus=True):
     if height > 1e-9:
         parts.append(K.prism(end_face, tdir * height))
     solid = parts[0] if len(parts) == 1 else K.fuse(parts[0], parts[1:])
-    rec = {"origin": c.tolist(), "outward": o.tolist(), "edge": u.tolist(), "length": length, "thickness": t,
+    r = c - axis_origin                                    # Rodrigues rotation of the face centre
+    rc = axis_origin + r * math.cos(angle) + np.cross(axis, r) * math.sin(angle) + axis * float(axis @ r) * (1 - math.cos(angle))
+    tip = {"center": (rc + tdir * height).tolist()}
+    parent = None
+    for i, pb in enumerate(previous):                    # attached to the tip face of an earlier flange?
+        if np.linalg.norm(c - np.array(pb["end_center"])) < max(0.05 * t, 0.01) and \
+                float(np.dot(o, pb["end_normal"])) > 0.999:
+            parent = i
+    rec = {"parent": parent, "end_center": tip["center"], "end_normal": [float(x) for x in tdir],
+           "origin": c.tolist(), "outward": o.tolist(), "edge": u.tolist(), "length": length, "thickness": t,
            "angle": angle, "radius": radius, "height": height, "k": k_factor}
     return solid, rec
 
@@ -78,13 +87,16 @@ def bend_allowance(angle, radius, thickness, k):
 
 
 def flat_pattern(shape, bends: list):
-    """Return (cut polylines, bend polylines) in 2-D sheet coordinates (mm) for a body with flanges."""
-    # base face: largest planar face whose normal is the sheet thickness direction
+    """Return (cut polylines, bend polylines) in 2-D sheet coordinates (mm) for a body with flanges.
+
+    Bends attached to the base sheet unfold outward from the base outline; a bend attached to the tip of
+    another flange continues from that flange's far edge (chains of any length)."""
     if not bends:
         raise K.KernelError("no bends recorded - this is already flat")
-    t = bends[0]["thickness"]
-    # the sheet normal is perpendicular to every bend's outward normal and edge direction
-    w = np.cross(np.array(bends[0]["outward"]), np.array(bends[0]["edge"]))
+    roots = [b for b in bends if b.get("parent") is None]
+    if not roots:
+        raise K.KernelError("no bend is attached to the base sheet")
+    w = np.cross(np.array(roots[0]["outward"]), np.array(roots[0]["edge"]))
     w /= np.linalg.norm(w)
     best = None
     for f in K.faces(shape):
@@ -96,7 +108,7 @@ def flat_pattern(shape, bends: list):
         raise K.KernelError("could not find the sheet's base face")
     _, base, bi = best
     n = np.array(bi["normal"], float)
-    ex = np.array(bends[0]["edge"], float)
+    ex = np.array(roots[0]["edge"], float)
     ex -= n * float(ex @ n)
     ex /= np.linalg.norm(ex)
     ey = np.cross(n, ex)
@@ -106,29 +118,40 @@ def flat_pattern(shape, bends: list):
         d = np.asarray(p, float) - org
         return np.array([float(d @ ex), float(d @ ey)])
 
-    cuts, bend_lines = [], []
-    bend_segs = []
-    for b in bends:
-        o = np.array(b["outward"], float)
-        u = np.array(b["edge"], float)
-        c = np.array(b["origin"], float)
-        a = to2(c - u * b["length"] / 2)
-        z = to2(c + u * b["length"] / 2)
-        out2 = to2(c + o) - to2(c)
-        out2 /= np.linalg.norm(out2)
+    def dir2(v):
+        d = to2(org + np.asarray(v, float)) - to2(org)
+        return d / np.linalg.norm(d)
+
+    placed = []                                   # per bend: dict(a, z, out, dev, far_a, far_z)
+    for i, b in enumerate(bends):
+        u, c = np.array(b["edge"], float), np.array(b["origin"], float)
         dev = bend_allowance(b["angle"], b["radius"], b["thickness"], b["k"]) + b["height"]
-        bend_segs.append((a, z, out2, dev))
-        bend_lines.append(np.array([a, z]))
+        par = b.get("parent")
+        if par is None:
+            a, z = to2(c - u * b["length"] / 2), to2(c + u * b["length"] / 2)
+            out = dir2(b["outward"])
+        else:
+            pp, pb = placed[par], bends[par]
+            e2 = dir2(u)
+            off = float((c - np.array(pb["end_center"], float)) @ np.array(pb["edge"], float))
+            pu = dir2(pb["edge"])
+            mid = (pp["far_a"] + pp["far_z"]) / 2 + pu * off
+            a, z = mid - e2 * b["length"] / 2, mid + e2 * b["length"] / 2
+            out = pp["out"]
+        placed.append({"a": a, "z": z, "out": out, "dev": dev, "far_a": a + out * dev, "far_z": z + out * dev})
+
+    cuts, bend_lines = [], []
+    base_segs = [(p["a"], p["z"]) for p, b in zip(placed, bends) if b.get("parent") is None]
     for e in K.edges(base):
         pl = np.array([to2(p) for p in K.edge_polyline(e, 0.05)])
-        if len(pl) < 2:
-            continue
-        shared = any(_same_seg(pl[0], pl[-1], a, z) for a, z, _, _ in bend_segs)
-        if not shared:
+        if len(pl) >= 2 and not any(_same_seg(pl[0], pl[-1], a, z) for a, z in base_segs):
             cuts.append(pl)
-    for a, z, out2, dev in bend_segs:
-        a2, z2 = a + out2 * dev, z + out2 * dev
-        cuts += [np.array([a, a2]), np.array([a2, z2]), np.array([z2, z])]
+    for i, (p, b) in enumerate(zip(placed, bends)):
+        bend_lines.append(np.array([p["a"], p["z"]]))
+        cuts += [np.array([p["a"], p["far_a"]]), np.array([p["z"], p["far_z"]])]
+        has_child = any(c.get("parent") == i and abs(c["length"] - b["length"]) < 0.05 for c in bends)
+        if not has_child:
+            cuts.append(np.array([p["far_a"], p["far_z"]]))
     return cuts, bend_lines
 
 

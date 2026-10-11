@@ -76,3 +76,20 @@ def test_bad_flange_reports_error():
     p = plate(d)
     with pytest.raises(DesignError):
         d.flange(p.faces(normal=(0, 0, 1))[0], height="5 mm", angle="200 deg")
+
+
+def test_flange_on_flange_chain_and_flat_pattern(tmp_path):
+    d = Design()
+    p = plate(d, 60, 40, 2)
+    d.flange(side_face(p, (0, 1, 0)), height="15 mm", angle="90 deg", radius="3 mm")
+    # the tip of the wall: top face of the flange (normal +Z)
+    tip = d.bodies[0].faces(normal=(0, 0, 1))
+    tip = [f for f in tip if f["face"]["sig"]["center"][2] > 10][0]
+    d.flange(tip, height="10 mm", angle="90 deg", radius="2 mm", flip=False)
+    sheet = d.doc.state.sheet
+    assert [b["parent"] for b in sheet] == [None, 0]
+    assert len(K.solids(d.bodies[0].shape)) == 1
+    size = d.flat_pattern(str(tmp_path / "c.dxf"))
+    ba1, ba2 = (math.pi / 2) * (3 + 0.44 * 2), (math.pi / 2) * (2 + 0.44 * 2)
+    assert sorted(size) == pytest.approx(sorted([60.0, 40 + ba1 + 15 + ba2 + 10]), abs=1e-3)
+    assert (tmp_path / "c.dxf").read_text().count("BEND") >= 3          # layer table + two bend lines
