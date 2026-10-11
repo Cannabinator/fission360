@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Fission360 headless and expose it to a remote machine (e.g. Windows 11)
+# Run Kerfline headless and expose it to a remote machine (e.g. Windows 11)
 # through a web browser (noVNC) or any VNC client. Lightweight, for testing.
 #
 #   ./scripts/remote.sh                 # browser on http://localhost:6080 (via SSH tunnel)
@@ -38,11 +38,11 @@ if [ -n "$need" ]; then
 fi
 
 # Python to run the app: installed launcher, dev venv, or system python
-if command -v fission360 >/dev/null; then APP=(fission360)
-elif [ -x "$HERE/.venv/bin/python" ]; then APP=("$HERE/.venv/bin/python" -m fission360)
-else APP=(python3 -m fission360); fi
+if command -v kerfline >/dev/null; then APP=(kerfline)
+elif [ -x "$HERE/.venv/bin/python" ]; then APP=("$HERE/.venv/bin/python" -m kerfline)
+else APP=(python3 -m kerfline); fi
 
-STATE="${XDG_RUNTIME_DIR:-/tmp}/fission360-remote"
+STATE="${XDG_RUNTIME_DIR:-/tmp}/kerfline-remote"
 mkdir -p "$STATE"
 PIDS=()
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done; }
@@ -76,7 +76,7 @@ PIDS+=($!)
 
 HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo "------------------------------------------------------------------"
-echo " Fission360 remote session on display $DISPLAY ($SIZE)"
+echo " Kerfline remote session on display $DISPLAY ($SIZE)"
 if [ "$PUBLIC" = 1 ]; then
   echo " Browser:    http://$HOST:$PORT/vnc.html?autoconnect=1&resize=scale"
   echo " VNC client: $HOST:$VNC_PORT"

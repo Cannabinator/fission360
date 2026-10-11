@@ -412,7 +412,7 @@ def write_svg(sheet: Sheet, path: str, author: str = ""):
     sc = f"{sheet.scale[0]}:{sheet.scale[1]}"
     out.append(f'<text class="t" x="{bx + 3}" y="{by + 20}">Scale {sc}   Sheet {sheet.size}   Units mm   '
                f'{datetime.date.today().isoformat()}{("   " + escape(author)) if author else ""}</text>')
-    out.append(f'<text class="t" x="{bx + 3}" y="{by + 24.5}">Third angle projection - Fission360</text></svg>')
+    out.append(f'<text class="t" x="{bx + 3}" y="{by + 24.5}">Third angle projection - Kerfline</text></svg>')
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(out))
 

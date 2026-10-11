@@ -451,7 +451,7 @@ class Document:
 
     # ------------------------------------------------------------------ persistence
     def to_dict(self, include_versions: bool = False) -> dict:
-        d = {"format": "fission360", "version": FILE_VERSION, "units": self.units, "fid": self._fid,
+        d = {"format": "kerfline", "version": FILE_VERSION, "units": self.units, "fid": self._fid,
              "marker": self.marker, "parameters": self.params.to_dict(),
              "features": [f.to_dict() for f in self.features], "bodies": copy.deepcopy(self.body_props)}
         if include_versions and self.versions:
@@ -460,8 +460,8 @@ class Document:
 
     @staticmethod
     def from_dict(d: dict) -> "Document":
-        if d.get("format") != "fission360":
-            raise ValueError("not a Fission360 document")
+        if d.get("format") != "kerfline":
+            raise ValueError("not a Kerfline document")
         doc = Document()
         doc.units = d.get("units", "mm")
         doc._fid = d.get("fid", 0)
@@ -626,7 +626,7 @@ class Document:
 
 def export_obj(doc, bodies, path):
     with open(path, "w") as fh:
-        fh.write("# Fission360 OBJ export\n")
+        fh.write("# Kerfline OBJ export\n")
         base = 1
         for b in bodies:
             m = K.tessellate(b.shape)

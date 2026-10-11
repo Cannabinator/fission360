@@ -67,7 +67,7 @@ FUZZY = 1e-5
 
 def _quiet_occt():
     """Silence OCCT's console printer (STEP/IGES transfer statistics)."""
-    if os.environ.get("FISSION360_OCCT_VERBOSE"):
+    if os.environ.get("KERFLINE_OCCT_VERBOSE"):
         return
     try:
         from OCP.Message import Message, Message_Gravity
@@ -1158,7 +1158,7 @@ def export_step_assembly(tree, path: str):
         TDataStd_Name.Set_s(label, TCollection_ExtendedString(text))
 
     root = st.NewShape()
-    name(root, "Fission360 design")
+    name(root, "Kerfline design")
     for comp, parts in tree:
         if comp is None:
             for pname, shape in parts:
@@ -1401,7 +1401,7 @@ def export_3mf(named_shapes, path: str):
         raise KernelError("nothing to export")
     parts = ['<?xml version="1.0" encoding="UTF-8"?>',
              '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
-             '<metadata name="Application">Fission360</metadata><resources>']
+             '<metadata name="Application">Kerfline</metadata><resources>']
     for i, (name, v, t) in enumerate(objs, 1):
         parts.append(f'<object id="{i}" type="model" name="{escape(str(name))}"><mesh><vertices>')
         parts.extend(f'<vertex x="{a:.5f}" y="{b:.5f}" z="{c:.5f}"/>' for a, b, c in v)

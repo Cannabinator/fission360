@@ -4,8 +4,8 @@ import math
 import numpy as np
 import pytest
 
-from fission360.api import Design, DesignError
-from fission360.core import kernel as K
+from kerfline.api import Design, DesignError
+from kerfline.core import kernel as K
 
 
 def plate(d, w=60, l=40, t=2):

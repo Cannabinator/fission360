@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Fission360
+Name=Kerfline
 GenericName=3D CAD
 Comment=Parametric 3D CAD modelling
-Exec=fission360 %f
-Icon=fission360
+Exec=kerfline %f
+Icon=kerfline
 Terminal=false
 Categories=Graphics;3DGraphics;Engineering;
-MimeType=application/x-fission360;
-StartupWMClass=fission360
+MimeType=application/x-kerfline;
+StartupWMClass=kerfline

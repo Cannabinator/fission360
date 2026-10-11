@@ -15,8 +15,8 @@ def test_window_sketch_extrude(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.ui.main_window import MainWindow
-    from fission360.ui.viewport import Pick
+    from kerfline.ui.main_window import MainWindow
+    from kerfline.ui.viewport import Pick
     win = MainWindow()
     win.show()
     app.processEvents()
@@ -47,10 +47,10 @@ def test_joint_command_and_component_browser(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.api import Design
-    from fission360.core import kernel as K
-    from fission360.ui.main_window import MainWindow
-    from fission360.ui.viewport import Pick
+    from kerfline.api import Design
+    from kerfline.core import kernel as K
+    from kerfline.ui.main_window import MainWindow
+    from kerfline.ui.viewport import Pick
     win = MainWindow()
     win.show()
     d = Design(win.doc)
@@ -87,10 +87,10 @@ def test_joint_motion_dialog(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.api import Design
-    from fission360.core import kernel as K
-    from fission360.ui import dialogs as D
-    from fission360.ui.main_window import MainWindow
+    from kerfline.api import Design
+    from kerfline.core import kernel as K
+    from kerfline.ui import dialogs as D
+    from kerfline.ui.main_window import MainWindow
     win = MainWindow()
     win.show()
     d = Design(win.doc)
@@ -118,10 +118,10 @@ def test_flange_command_in_gui(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.api import Design
-    from fission360.core import kernel as K
-    from fission360.ui.main_window import MainWindow
-    from fission360.ui.viewport import Pick
+    from kerfline.api import Design
+    from kerfline.core import kernel as K
+    from kerfline.ui.main_window import MainWindow
+    from kerfline.ui.viewport import Pick
     win = MainWindow()
     win.show()
     d = Design(win.doc)
@@ -151,8 +151,8 @@ def test_render_image_offscreen(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.api import Design
-    from fission360.ui.main_window import MainWindow
+    from kerfline.api import Design
+    from kerfline.ui.main_window import MainWindow
     win = MainWindow()
     win.show()
     Design(win.doc).box(0, 0, 40, 30, 10)
@@ -176,8 +176,8 @@ def test_render_image_ground_shadow(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.api import Design
-    from fission360.ui.main_window import MainWindow
+    from kerfline.api import Design
+    from kerfline.ui.main_window import MainWindow
     win = MainWindow()
     win.show()
     Design(win.doc).box(0, 0, 20, 20, 30)
@@ -204,9 +204,9 @@ def test_material_finish_changes_highlight(tmp_path, monkeypatch):
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     QSurfaceFormat.setDefaultFormat(fmt)
     app = QApplication.instance() or QApplication([])
-    from fission360.api import Design
-    from fission360.core.materials import FINISH
-    from fission360.ui.main_window import MainWindow
+    from kerfline.api import Design
+    from kerfline.core.materials import FINISH
+    from kerfline.ui.main_window import MainWindow
     assert FINISH["Glass"][0] > FINISH["Wood (Oak)"][0] and FINISH["Stainless Steel"][1] > FINISH["Nylon"][1]
     win = MainWindow()
     win.show()

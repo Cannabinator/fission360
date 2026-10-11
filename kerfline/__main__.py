@@ -1,4 +1,4 @@
-"""Entry point: ``python -m fission360 [file.f3x]``."""
+"""Entry point: ``python -m kerfline [file.f3x]``."""
 from __future__ import annotations
 
 import os
@@ -6,11 +6,11 @@ import sys
 
 
 def _headless(argv) -> int:
-    """``fission360 --run script.py [design.f3x] [--out result.f3x]`` without a GUI."""
+    """``kerfline --run script.py [design.f3x] [--out result.f3x]`` without a GUI."""
     from .api import Design, run_script
     i = argv.index("--run")
     if i + 1 >= len(argv):
-        print("usage: fission360 --run script.py [design.f3x] [--out result.f3x]", file=sys.stderr)
+        print("usage: kerfline --run script.py [design.f3x] [--out result.f3x]", file=sys.stderr)
         return 2
     script = argv[i + 1]
     rest = [a for a in argv[i + 2:] if not a.startswith("--")]
@@ -46,14 +46,14 @@ def main(argv=None):
     QSurfaceFormat.setDefaultFormat(fmt)
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(argv)
-    app.setApplicationName("Fission360")
-    app.setOrganizationName("Fission360")
-    app.setDesktopFileName("fission360")
+    app.setApplicationName("Kerfline")
+    app.setOrganizationName("Kerfline")
+    app.setDesktopFileName("kerfline")
 
     from PySide6.QtCore import QSettings
     from .ui import theme
     from .ui.icons import icon
-    dark = QSettings("Fission360", "Fission360").value("theme", "light") == "dark"
+    dark = QSettings("Kerfline", "Kerfline").value("theme", "light") == "dark"
     if dark:
         theme.apply_dark()
     app.setStyle("Fusion")

@@ -1,10 +1,10 @@
 """Fusion-style QOL behaviour of the modelling core."""
 import pytest
 
-from fission360.core import kernel as K
-from fission360.core import references as R
-from fission360.core.document import Document, Feature
-from fission360.core.features import default_data, execute
+from kerfline.core import kernel as K
+from kerfline.core import references as R
+from kerfline.core.document import Document, Feature
+from kerfline.core.features import default_data, execute
 
 
 def box(doc, h="20"):

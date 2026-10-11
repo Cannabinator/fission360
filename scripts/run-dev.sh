@@ -6,4 +6,4 @@ if [ ! -x "$HERE/.venv/bin/python" ]; then
   python3 -m venv "$HERE/.venv"
   "$HERE/.venv/bin/pip" install -e "$HERE[dev]"
 fi
-exec "$HERE/.venv/bin/python" -m fission360 "$@"
+exec "$HERE/.venv/bin/python" -m kerfline "$@"

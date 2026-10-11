@@ -24,7 +24,7 @@ from .panels import Browser, Timeline
 from .sketch_session import SketchSession
 from .viewport import Pick, Viewport
 
-FILE_FILTER = "Fission360 Design (*.f3x);;All files (*)"
+FILE_FILTER = "Kerfline Design (*.f3x);;All files (*)"
 IMPORT_FILTER = "CAD files (*.step *.stp *.iges *.igs *.stl *.brep);;All files (*)"
 EXPORT_FORMATS = ("STEP (*.step);;IGES (*.iges);;3MF for slicers (*.3mf);;STL mesh (*.stl);;OBJ mesh (*.obj);;"
                   "OCC BREP (*.brep)")
@@ -159,7 +159,7 @@ class Ribbon(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("Fission360", "Fission360")
+        self.settings = QSettings("Kerfline", "Kerfline")
         self.doc = Document()
         self.session: SketchSession | None = None
         self.panel = None
@@ -478,7 +478,7 @@ class MainWindow(QMainWindow):
         self._menu_action(tm, "select_other")
         hm = mb.addMenu("&Help")
         hm.addAction("Keyboard && Mouse Shortcuts", self.show_shortcuts)
-        hm.addAction("About Fission360", self.about)
+        hm.addAction("About Kerfline", self.about)
 
     def _menu_action(self, menu, key):
         c = self.commands[key]
@@ -550,7 +550,7 @@ class MainWindow(QMainWindow):
         self.perf.setText(msg)
 
     def _update_title(self):
-        self.setWindowTitle(f"{self.doc.name}{' *' if self.doc.modified else ''} — Fission360")
+        self.setWindowTitle(f"{self.doc.name}{' *' if self.doc.modified else ''} — Kerfline")
 
     def confirm_discard(self):
         if not self.doc.modified or not self.doc.features:
@@ -657,7 +657,7 @@ class MainWindow(QMainWindow):
     def do_autosave(self):
         if not self.doc.modified or not self.doc.features:
             return
-        d = os.path.join(os.path.expanduser("~"), ".local", "share", "fission360", "autosave")
+        d = os.path.join(os.path.expanduser("~"), ".local", "share", "kerfline", "autosave")
         try:
             os.makedirs(d, exist_ok=True)
             p, n, m = self.doc.path, self.doc.name, self.doc.modified
@@ -1088,8 +1088,8 @@ class MainWindow(QMainWindow):
 
     def about(self):
         from OCP import __version__ as ocp_v  # noqa
-        QMessageBox.about(self, "About Fission360",
-                          f"<h3>Fission360 {__version__}</h3>Parametric 3D CAD for Linux.<br>"
+        QMessageBox.about(self, "About Kerfline",
+                          f"<h3>Kerfline {__version__}</h3>Parametric 3D CAD for Linux.<br>"
                           "Kernel: OpenCASCADE (OCCT) via OCP · UI: Qt 6 · Rendering: OpenGL 3.3 core")
 
     # ------------------------------------------------------------------ view

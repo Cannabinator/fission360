@@ -21,9 +21,9 @@ FreeCAD 1.0 (18 Nov 2024) made the topological-naming mitigation and a new integ
 - G2 user-review summary rates Fusion higher overall and support better; FreeCAD praised for drawings and large models — [G2](https://www.g2.com/compare/autodesk-fusion-vs-freecad)
 
 ### Inferences
-- Pattern in 1.1 (previews, draggers, any-workbench datums) shows FreeCAD is paying down the "modal / workbench-silo" UX debt incrementally; Fission360 should start with unified datums and live feature previews rather than retrofit.
+- Pattern in 1.1 (previews, draggers, any-workbench datums) shows FreeCAD is paying down the "modal / workbench-silo" UX debt incrementally; Kerfline should start with unified datums and live feature previews rather than retrofit.
 - Dev turnover plus ~EUR 130k/yr budget implies slow throughput on deep architectural rewrites; a funded, focused product can out-iterate on UX.
-- Toponaming fix being scoped to Sketcher + PartDesign means cross-workbench references (Part, Assembly, Draft) remain fragile; Fission360 should make persistent entity IDs (history-based naming with fallback matching) a core document-model service from day one.
+- Toponaming fix being scoped to Sketcher + PartDesign means cross-workbench references (Part, Assembly, Draft) remain fragile; Kerfline should make persistent entity IDs (history-based naming with fallback matching) a core document-model service from day one.
 
 ### Gaps
 - Could not open official 1.0/1.1 release notes: no verified detail on Qt6/OCCT versions, Sketcher/TechDraw/Path-CAM changes in 1.0, or Assembly 1.1 changes.
@@ -43,7 +43,7 @@ SolveSpace is a small GPL-3 parametric CAD whose constraint solver is packaged a
 - Dune3D = SolveSpace solver/workflow + OpenCASCADE + Horizon EDA UI — [Dune3D docs via search](https://docs.dune3d.org/en/latest/why-another-3d-cad.html)
 
 ### Inferences
-- Reuse path: libslvs (GPL-3) is embeddable but GPL is a licensing constraint for a closed or non-GPL Fission360; check Fission360's licence before linking. FreeCAD's PlaneGCS is LGPL (background knowledge, unsourced) and is the licence-friendlier 2D option.
+- Reuse path: libslvs (GPL-3) is embeddable but GPL is a licensing constraint for a closed or non-GPL Kerfline; check Kerfline's licence before linking. FreeCAD's PlaneGCS is LGPL (background knowledge, unsourced) and is the licence-friendlier 2D option.
 
 ### Gaps
 - No sourced statement on why users love the solver (background knowledge, unsourced: fast, robust, handles 3D constraints, under/over-constrained diagnostics with DOF count), nor on solver limits (e.g. no NURBS-surface constraints).
@@ -62,7 +62,7 @@ Both are Python on OCCT (via OCP). build123d is positioned as the evolution of C
 - Both export STEP; used in 2026 AI/agentic CAD benchmarks — HN thread above
 
 ### Inferences
-- Fission360's Python API should expose the document model so a script can create features that also appear in the GUI timeline (the thing CadQuery/build123d lack: a GUI/history). Mirror build123d's explicit-algebra style (immutable shapes, operators) rather than fluent chaining.
+- Kerfline's Python API should expose the document model so a script can create features that also appear in the GUI timeline (the thing CadQuery/build123d lack: a GUI/history). Mirror build123d's explicit-algebra style (immutable shapes, operators) rather than fluent chaining.
 - Code-CAD is also the natural LLM interface; an agent-friendly API is cheap leverage.
 
 ### Gaps

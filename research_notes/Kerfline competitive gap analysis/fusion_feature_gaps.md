@@ -1,8 +1,8 @@
-# Autodesk Fusion (360) feature inventory vs Fission360 gaps (2026)
+# Autodesk Fusion (360) feature inventory vs Kerfline gaps (2026)
 
 NOTE ON SOURCING: WebFetch was blocked in this environment (DNS failures), so only search-result snippets were usable. Cited findings are limited to what snippets confirmed. The detailed per-command inventory in the Inferences sections comes from analyst/training knowledge of Fusion (pre-2026 baseline), NOT verified this session. Treat it as "probable, verify against help.autodesk.com". Ratings: Importance H/M/L for Hobbyist(Hb) / Startup product designer(SU) / Small machine shop(MS). Difficulty on OpenCASCADE (OCCT): 1 trivial ... 5 research-grade.
 
-## Q1. Design-workspace modelling commands Fission360 lacks, ranked
+## Q1. Design-workspace modelling commands Kerfline lacks, ranked
 
 ### Takeaway
 Confirmed Create-menu solid tools include Rib, Web, Emboss, Hole, Thread, Boundary Fill. Highest-value missing commands are Text (sketch + emboss/extrude), Thread, Rib/Web, Offset Face, Variable-radius/Rule/Full-round fillets, Thicken, Sketch offset/mirror/pattern/ellipse/conic, and 3D sketch. Most are medium difficulty on OCCT.
@@ -28,12 +28,12 @@ Ranked gap list (Hb/SU/MS importance; OCCT difficulty):
 8. Emboss and Decal: M/M/L; 3 (project + offset body) / decal is rendering only.
 9. Project to Surface, Wrap onto face: M/M/L; 4.
 10. Pipe (path+section), Plane-along-path, Plane-at-angle, Midplane, Tangent plane, Offset curve on surface: M/M/L; 2.
-11. Mirror/pattern along path, Pattern on path/curve: M/M/M; 2 (Fission has patterns, extend).
+11. Mirror/pattern along path, Pattern on path/curve: M/M/M; 2 (Kerfline has patterns, extend).
 12. Insert: Insert Mesh, Insert SVG, Insert DXF, Decal, Canvas (image reference), Attached canvas: Canvas+SVG+DXF H/H/H; 1-2 (DXF/SVG are very commonly requested by makers/shops).
 13. Select menu: window/paint/tangent chain/ selection filters, Select Through: M; 1-2.
 14. Inspect: Interference done; missing Curvature Comb, Zebra Analysis, Draft Analysis, Curvature Map Analysis, Isocurve, Accessibility, Section done, Center of mass display, Component Color Cycling: Zebra/Draft/Curvature M/H/L; 2 (shader/ OCCT curvature queries).
 15. Modify: Combine/Move done; missing Remove, Replace Face, Physical Material/Appearance assignment, Compute All, Change Parameters (done as params), Align, Delete, Attribute assignment: M; 1-3.
-16. Parameters: Fission has user params; missing Favorites, model parameter visibility, configurations (table-driven variants, H/H/M for SU/MS; 4).
+16. Parameters: Kerfline has user params; missing Favorites, model parameter visibility, configurations (table-driven variants, H/H/M for SU/MS; 4).
 17. Sketch: Fit-point & control-point spline done; missing Tangent/Fit Spline curvature display, Offset, Mirror, Circular/Rect pattern, Scale, Break, Extend, Stretch, Sketch Dimensions on arcs/ordinate, Insert text, Fix/Unfix, Intersection curve, Intersect, Project-to-surface, Sketch palette show/hide, Look at, Slice. Importance: Offset/Mirror/Pattern/Extend/Break/Stretch H/H/H; 2.
 Top three highest ROI by (importance)/(difficulty): Text, sketch offset/mirror/pattern, Canvas/SVG/DXF insert, variable-radius/full-round fillet, cosmetic thread.
 
@@ -53,7 +53,7 @@ Fusion's model: one document can contain a component tree; bodies are raw solids
 - Autodesk positions Fusion assembly via "Joints vs. Mates" - joints combine position and motion definition. — [Autodesk blog](https://www.autodesk.com/products/fusion-360/blog/joints-mates-moving-fusion/)
 
 ### Inferences (analyst knowledge, unverified)
-- Fusion joint types: Rigid, Revolute, Slider, Cylindrical, Pin-Slot, Planar, Ball; Joint Origin (snaps to vertex/edge midpoint/face center, offset+angle), Joint Limits (min/max/rest), Drive Joints, Motion Link (gear/rack relationships), Motion Study (Animation workspace / Motion Contact), Contact Sets (Enable Contact Sets / Enable All Contact: collision detection while driving joints), Enable Contact, Interference done in Fission. Ground (fixed) component, Align, Move/Copy of components, Component from bodies, Insert into Current Design, Linked/external references (Insert > Insert into current design links a cloud design; updates by version), Capture Position, Assembly Constraints are not mates (no distance/angle mates; joints cover). Fusion also has BOM table export, Exploded View (Animation), Assemble > Joint, Rigid Group, Drive Joints, Joint Origin, Joint Limits, Joint Between Bodies, Contact Sets.
+- Fusion joint types: Rigid, Revolute, Slider, Cylindrical, Pin-Slot, Planar, Ball; Joint Origin (snaps to vertex/edge midpoint/face center, offset+angle), Joint Limits (min/max/rest), Drive Joints, Motion Link (gear/rack relationships), Motion Study (Animation workspace / Motion Contact), Contact Sets (Enable Contact Sets / Enable All Contact: collision detection while driving joints), Enable Contact, Interference done in Kerfline. Ground (fixed) component, Align, Move/Copy of components, Component from bodies, Insert into Current Design, Linked/external references (Insert > Insert into current design links a cloud design; updates by version), Capture Position, Assembly Constraints are not mates (no distance/angle mates; joints cover). Fusion also has BOM table export, Exploded View (Animation), Assemble > Joint, Rigid Group, Drive Joints, Joint Origin, Joint Limits, Joint Between Bodies, Contact Sets.
 - Importance: Components+joints H for SU/MS/Hb (multi-part products, enclosures, fixtures); external references M/H/M (team workflows); motion study/contact sets M/M/L; exploded views M/H/M (documentation); BOM M/H/H.
 - Difficulty on OCCT: components as TopLoc_Location/ XCAF (XDE) assembly tree 2-3 (OCCT XCAF handles STEP assembly/colors); joint solver is NOT in OCCT: must build a small kinematic constraint solver (3-4). Contact/collision driven motion: use BRepExtrema/ BRepAlgoAPI_Common or mesh collision, 3-4. External references/versioning need backend, 4-5.
 - MVP: (1) component tree with per-component location and own body list, (2) STEP/XCAF assembly import/export preserving structure, (3) 4-5 joint types + limits + ground + drag animation, (4) as-built joint (joint from current pose), (5) rigid group, (6) BOM/exploded later.
@@ -111,7 +111,7 @@ Core subscription includes parametric design, sheet metal, surface, mesh, drawin
 - STEP export was proposed for removal from personal use, then retained. — [Fabbaloo](https://www.fabbaloo.com/?p=194461)
 
 ### Inferences
-- Implication for Fission360: an open, free-for-commercial parametric tool can undercut by offering what Autodesk fences (commercial use, many documents, translators, 4-axis-lite CAM).
+- Implication for Kerfline: an open, free-for-commercial parametric tool can undercut by offering what Autodesk fences (commercial use, many documents, translators, 4-axis-lite CAM).
 - Exact current prices were not retrievable (price templates unfilled); do not quote any.
 
 ### Gaps
@@ -130,7 +130,7 @@ Commodity (replicable on OCCT in weeks to months): sketch/solid feature set, fil
 - Reviews report slow performance and weaker organic modeling, i.e. areas where a lean OCCT tool can compete. — [Capterra](https://capterra.com/p/178416/Fusion-360/reviews/)
 
 ### Inferences
-- Priority for Fission360 (value per effort): (1) sketch/fillet/text/thread completeness, (2) components + joints MVP + assembly STEP, (3) 2D drawings + DXF flat export, (4) 3MF + slicer handoff, (5) scripting API (Python) for community, (6) sheet metal unfold, (7) basic CAM 2.5D (large effort, large shop value), (8) FEA linear static via Gmsh+CalculiX. Defer T-spline, generative, electronics, cloud collab (use git-like versioning of file-based documents as lightweight alternative).
+- Priority for Kerfline (value per effort): (1) sketch/fillet/text/thread completeness, (2) components + joints MVP + assembly STEP, (3) 2D drawings + DXF flat export, (4) 3MF + slicer handoff, (5) scripting API (Python) for community, (6) sheet metal unfold, (7) basic CAM 2.5D (large effort, large shop value), (8) FEA linear static via Gmsh+CalculiX. Defer T-spline, generative, electronics, cloud collab (use git-like versioning of file-based documents as lightweight alternative).
 - Stability/robustness of fillets and booleans on OCCT is itself a competitive risk; invest in ShapeFix and failure messaging.
 
 ### Gaps

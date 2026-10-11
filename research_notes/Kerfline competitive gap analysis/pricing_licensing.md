@@ -94,7 +94,7 @@ FreeCAD (free/offline, steep curve), Onshape Free (cloud, public docs), Plastici
 ## 6. Sustainability models
 
 ### Takeaway
-Donation-funded FreeCAD is small (~EUR130k/yr); Blender relies on corporate patrons; KiCad runs fund drives. Fission360 could add paid sync/support/extensions.
+Donation-funded FreeCAD is small (~EUR130k/yr); Blender relies on corporate patrons; KiCad runs fund drives. Kerfline could add paid sync/support/extensions.
 
 ### Cited Findings
 - FreeCAD 2025: donations EUR129,981.32, expenditures EUR127,093.95, 2026 budget EUR230,000 drawing on reserve; income all donations, mostly individuals — [FPA report](https://fpa.freecad.org/annualreports/2026.html), [blog](https://blog.freecad.org/2026/04/24/2025-annual-report-and-plans-for-2026/)
@@ -107,7 +107,7 @@ Donation-funded FreeCAD is small (~EUR130k/yr); Blender relies on corporate patr
 ### Gaps
 - Blender 2025 total income, KiCad final total, Onshape free-plan economics: not found.
 
-## 7. Licensing risks for Fission360
+## 7. Licensing risks for Kerfline
 
 ### Takeaway
 OCCT (LGPL-2.1 + OCCT exception, v6.7.0+) and PySide6 (LGPL/GPL/commercial) are compatible with an MIT/LGPL/GPL app if dynamically linked and notices kept; verify wheel bundled libs; UI cloning risk is mostly trade dress/copyright of assets, not covered by search.

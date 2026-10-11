@@ -4,7 +4,7 @@ The API drives the *same* document model as the GUI: every call adds a real
 feature to the parametric timeline (with parameters, undo and rebuild), so a
 script's result can be edited in the application afterwards.
 
-    from fission360.api import Design
+    from kerfline.api import Design
 
     d = Design()
     d.param("width", "60 mm")
@@ -16,7 +16,7 @@ script's result can be edited in the application afterwards.
     d.hole(base.face(normal=(0, 0, 1)), at=(10, 10), diameter="5 mm", depth="8 mm")
     d.save("part.f3x"); d.export("part.step")
 
-Run a script headless with ``fission360 --run script.py [file.f3x]`` or from
+Run a script headless with ``kerfline --run script.py [file.f3x]`` or from
 the GUI via Tools > Run Script (the script sees ``design`` bound to the open document).
 """
 from __future__ import annotations
@@ -425,7 +425,7 @@ class Design:
 def run_script(path: str, design: Design | None = None, extra: dict | None = None) -> Design:
     """Execute a script file with ``design`` and the API names in scope."""
     design = design or Design()
-    ns = {"design": design, "Design": Design, "K": K, "np": np, "math": math, "__name__": "__fission_script__"}
+    ns = {"design": design, "Design": Design, "K": K, "np": np, "math": math, "__name__": "__kerfline_script__"}
     ns.update(extra or {})
     with open(path, "r", encoding="utf-8") as fh:
         code = compile(fh.read(), path, "exec")

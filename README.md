@@ -1,17 +1,17 @@
-# Fission360
+# Kerfline
 
 A parametric, history-based 3D CAD modeller for Linux/Ubuntu, modelled on the
 workflow of Autodesk Fusion 360: sketch → constrain/dimension → features →
 editable timeline, driven by named parameters.
 
-![Fission360](docs/screenshot.png)
+![Kerfline](docs/screenshot.png)
 
 ## Install & run (Ubuntu 22.04 / 24.04)
 
 ```bash
-git clone https://github.com/cannabinator/fission360 && cd fission360
-./scripts/install.sh      # venv in ~/.local/share/fission360, app-menu entry, .f3x MIME type
-fission360                # or: fission360 part.f3x
+git clone https://github.com/cannabinator/kerfline && cd kerfline
+./scripts/install.sh      # venv in ~/.local/share/kerfline, app-menu entry, .f3x MIME type
+kerfline                # or: kerfline part.f3x
 ```
 
 For development: `./scripts/run-dev.sh` (creates `.venv`, editable install).
@@ -87,7 +87,7 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 - *Features*: **variable-radius fillet**, **Rib / Web**, **cosmetic threads** (ISO metric + UNC/UNF tables, internal/external detection, label in the canvas) and **tapped holes** (drilled to tap-drill size). Text + Extrude gives emboss/engrave automatically.
 - *Export*: **3MF** for slicers (welded mesh, millimetres).
 - *Selection*: **Select Other** (Tools menu / marking menu) lists every face along the ray under the cursor, including hidden ones.
-- *Scripting*: `fission360.api` drives the same document the GUI edits (parameters, sketches, features, geometry selectors); run with `fission360 --run script.py` (headless, CI friendly) or Tools > Run Script. See `examples/bracket.py`.
+- *Scripting*: `kerfline.api` drives the same document the GUI edits (parameters, sketches, features, geometry selectors); run with `kerfline --run script.py` (headless, CI friendly) or Tools > Run Script. See `examples/bracket.py`.
 
 **Sketching**
 - Line (chained), 2-point & center rectangle, circle, 3-point & center arc, polygon, slot, spline, point.
@@ -119,7 +119,7 @@ Requirements: Python ≥ 3.10 and an OpenGL 3.3 driver (any Mesa/NVIDIA/AMD/Inte
 ## Architecture & technical decisions
 
 ```
-fission360/
+kerfline/
   core/expressions.py   safe AST evaluator with units (no eval) → documents can't run code
   core/parameters.py    parameter table, dependencies, cycle detection
   core/kernel.py        the only module touching OpenCASCADE (OCP bindings)
@@ -140,11 +140,11 @@ fission360/
 
 ## Scope & roadmap
 
-Implemented from the roadmap: Phase 0 (robustness, diffable format) and Phase 1 (sketch tools, DXF/SVG, 3MF, threads, rib, variable fillet) plus from Phase 2 the scripting API and file versioning. Plus the first slice of Phase 2: joints, components with assembly STEP export, and 2D drawings. **Not yet implemented**: sheet-metal jogs and side-edge flanges, as-built joints and contact/collision during motion, a GUI for placing drawing dimensions, detail views, full-round fillet, modeled (helical) threads, canvas images, thicken/stitch/surface tools, direct-edit face tools, sheet metal, CAM, simulation, rendering, T-splines. See `reports/Fission360 competitive gap analysis.md` for the full prioritised plan.
+Implemented from the roadmap: Phase 0 (robustness, diffable format) and Phase 1 (sketch tools, DXF/SVG, 3MF, threads, rib, variable fillet) plus from Phase 2 the scripting API and file versioning. Plus the first slice of Phase 2: joints, components with assembly STEP export, and 2D drawings. **Not yet implemented**: sheet-metal jogs and side-edge flanges, as-built joints and contact/collision during motion, a GUI for placing drawing dimensions, detail views, full-round fillet, modeled (helical) threads, canvas images, thicken/stitch/surface tools, direct-edit face tools, sheet metal, CAM, simulation, rendering, T-splines. See `reports/Kerfline competitive gap analysis.md` for the full prioritised plan.
 
 ## Licence
 
-Fission360 is free software under the **GNU Lesser General Public License, version 2.1 or (at your option) any later
+Kerfline is free software under the **GNU Lesser General Public License, version 2.1 or (at your option) any later
 version** - see [`LICENSE`](LICENSE). Third-party components and their licences are listed in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Fission360 is not affiliated with or endorsed by Autodesk;
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Kerfline is not affiliated with or endorsed by Autodesk;
 "Fusion 360" is an Autodesk trademark used here only to describe the workflow this project is modelled on.

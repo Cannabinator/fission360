@@ -1,6 +1,6 @@
 """Unit-aware expression engine for user parameters.
 
-Every numeric input in Fission360 (dimensions, feature distances, angles,
+Every numeric input in Kerfline (dimensions, feature distances, angles,
 pattern counts) is an *expression* string such as ``"width / 2 + 3 mm"`` or
 ``"30 deg"``.  Expressions are parsed with Python's ``ast`` module and
 evaluated by a small whitelist interpreter -- no ``eval`` -- so documents

@@ -2,8 +2,8 @@
 import numpy as np
 import pytest
 
-from fission360.api import Design
-from fission360.core import kernel as K
+from kerfline.api import Design
+from kerfline.core import kernel as K
 
 
 def two_blocks():
@@ -67,7 +67,7 @@ def test_cylindrical_faces_align_axes():
 
 def test_joint_errors_are_reported():
     d, a, b = two_blocks()
-    from fission360.api import DesignError
+    from kerfline.api import DesignError
     with pytest.raises(DesignError, match="same body"):
         d.joint(top(a), bottom(a))
 
@@ -110,7 +110,7 @@ def test_joint_survives_save_and_param_edit(tmp_path):
 
 
 def test_drawing_views_hidden_lines_and_formats(tmp_path):
-    from fission360 import drawing
+    from kerfline import drawing
     d = Design()
     a = d.box(0, 0, 60, 40, 20)
     d.hole(a.faces(normal=(0, 0, 1))[0], at=(30, 20), diameter="10 mm", depth="20 mm")
@@ -150,7 +150,7 @@ def test_slider_limits():
 
 
 def test_drawing_centre_marks_callouts_and_section(tmp_path):
-    from fission360 import drawing
+    from kerfline import drawing
     d = Design()
     a = d.box(0, 0, 60, 40, 20)
     d.hole(a.faces(normal=(0, 0, 1))[0], at=(30, 20), diameter="10 mm", depth="20 mm")

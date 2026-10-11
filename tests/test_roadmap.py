@@ -8,13 +8,13 @@ import zipfile
 import numpy as np
 import pytest
 
-from fission360.api import Design
-from fission360.core import kernel as K
-from fission360.core import references as R
-from fission360.core.document import Document
-from fission360.core.features import default_data
-from fission360.sketch import ops
-from fission360.sketch.model import Sketch
+from kerfline.api import Design
+from kerfline.core import kernel as K
+from kerfline.core import references as R
+from kerfline.core.document import Document
+from kerfline.core.features import default_data
+from kerfline.sketch import ops
+from kerfline.sketch.model import Sketch
 
 XY = K.ORIGIN_FRAMES["XY"]
 
@@ -74,7 +74,7 @@ def test_text_diffable_save_roundtrip(tmp_path):
     p = tmp_path / "t.f3x"
     doc.save(str(p))
     raw = p.read_text()
-    assert raw.startswith("{") and "\n" in raw and json.loads(raw)["format"] == "fission360"  # plain, diffable
+    assert raw.startswith("{") and "\n" in raw and json.loads(raw)["format"] == "kerfline"  # plain, diffable
     t = [e for e in Document.load(str(p)).features[0].sketch.entities.values() if e.kind == "text"][0]
     assert (t.text, t.height, t.bold, round(t.angle, 3)) == ("Hi", 6, True, 0.5)
     doc.save(str(p), compress=True)
@@ -228,7 +228,7 @@ def test_headless_run(tmp_path):
     script.write_text('sk = design.sketch("XY"); sk.rect(0, 0, 20, 20)\n'
                       'design.extrude(sk.profile(5, 5), "5 mm")\n')
     out = tmp_path / "o.f3x"
-    r = subprocess.run([sys.executable, "-m", "fission360", "--run", str(script), "--out", str(out)],
+    r = subprocess.run([sys.executable, "-m", "kerfline", "--run", str(script), "--out", str(out)],
                        capture_output=True, text=True, env={"QT_QPA_PLATFORM": "offscreen", "PATH": "/usr/bin",
                                                           "PYTHONPATH": str(__import__("pathlib").Path(__file__).parents[1])})
     assert r.returncode == 0, r.stderr

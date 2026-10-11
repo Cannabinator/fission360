@@ -1,6 +1,6 @@
 import pytest
 
-from fission360.sketch.model import Sketch, SketchError
+from kerfline.sketch.model import Sketch, SketchError
 
 
 def rect(s):
@@ -40,7 +40,7 @@ def test_redundant_constraint_rejected():
 
 
 def test_tangent_and_drag():
-    from fission360.sketch.solver import r_point_on_line
+    from kerfline.sketch.solver import r_point_on_line
     s = Sketch()
     l = s.add_line((0, 0), (50, 0))
     c = s.add_circle((20, 10), 5)

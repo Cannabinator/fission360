@@ -1,10 +1,10 @@
 import pytest
 
-from fission360.core import kernel as K
-from fission360.core import references as R
-from fission360.core.document import Document
-from fission360.core.features import default_data
-from fission360.sketch.model import Sketch
+from kerfline.core import kernel as K
+from kerfline.core import references as R
+from kerfline.core.document import Document
+from kerfline.core.features import default_data
+from kerfline.sketch.model import Sketch
 
 
 def make_block(doc, w="40 mm", h="20 mm"):

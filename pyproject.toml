@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fission360"
+name = "kerfline"
 version = "0.1.0"
 description = "Parametric 3D CAD for Linux, inspired by Fusion 360 (OpenCASCADE + Qt 6 + OpenGL)"
 readme = "README.md"
@@ -20,10 +20,10 @@ dependencies = [
 dev = ["pytest>=7"]
 
 [project.scripts]
-fission360 = "fission360.__main__:main"
+kerfline = "kerfline.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["fission360*"]
+include = ["kerfline*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

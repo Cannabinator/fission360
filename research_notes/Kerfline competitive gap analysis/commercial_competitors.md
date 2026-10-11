@@ -1,4 +1,4 @@
-# Commercial CAD Competitors and Reference Products (Fusion 360 gap analysis for Fission360)
+# Commercial CAD Competitors and Reference Products (Fusion 360 gap analysis for Kerfline)
 
 Note: research budget was ~11 tool calls, mostly search snippets (many aggregators). Prices are third-party unless stated; verify against vendor pages. Date of research: 2026-10-10.
 
@@ -102,7 +102,7 @@ Minimum viable: immutable named versions, branch/merge at the feature-tree level
 - FeatureScript: see Onshape section (features and tables defined in the language; std library public).
 
 ### Inferences
-- Proposed Fission360 MVP versioning: (1) autosaved operation log, (2) named versions/snapshots, (3) branches with three-way merge on feature-tree nodes (improving on Onshape's per-tab all-or-nothing), (4) comments pinned to geometry, (5) read-only share links, (6) human-readable (JSON/XML-like) diffable project format with stable feature IDs so Git works.
+- Proposed Kerfline MVP versioning: (1) autosaved operation log, (2) named versions/snapshots, (3) branches with three-way merge on feature-tree nodes (improving on Onshape's per-tab all-or-nothing), (4) comments pinned to geometry, (5) read-only share links, (6) human-readable (JSON/XML-like) diffable project format with stable feature IDs so Git works.
 - API: Python-first, same API used by built-ins (FeatureScript lesson), parametric user-defined features that appear in the tree and are version-pinned (FeatureScript merge/version mismatch shows the need for explicit API versioning), headless mode for CI, avoid a proprietary language.
 - Deliberately skip early: PDM/PLM, simulation depth, cloud-only architecture (a local-first model gives offline use that Fusion/Onshape lack).
 

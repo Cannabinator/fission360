@@ -1,6 +1,6 @@
 """Parametric bracket built with the scripting API.
 
-Run headless:   fission360 --run examples/bracket.py --out bracket.f3x
+Run headless:   kerfline --run examples/bracket.py --out bracket.f3x
 or in the GUI:  Tools > Run Script...  (the open design is changed and every step shows in the timeline)
 """
 design.param("width", "70 mm")

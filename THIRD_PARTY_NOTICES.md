@@ -1,6 +1,6 @@
 # Third-party software and notices
 
-Fission360 is licensed under the GNU LGPL 2.1 or later (see `LICENSE`). It does **not** bundle any third-party
+Kerfline is licensed under the GNU LGPL 2.1 or later (see `LICENSE`). It does **not** bundle any third-party
 code or fonts; the packages below are installed separately (by `pip` / `apt`) and linked dynamically.
 
 | Component | Licence | Used for |
@@ -17,13 +17,13 @@ If you redistribute a bundled build, keep Qt and PySide6 dynamically linked and 
 
 ## What was written from scratch
 
-All source files, the icons (inline SVG in `fission360/ui/icons.py`, `packaging/fission360.svg`) and the screenshot are
+All source files, the icons (inline SVG in `kerfline/ui/icons.py`, `packaging/kerfline.svg`) and the screenshot are
 original to this project. Standards data (ISO 261 / ASME B1.1 thread sizes, ISO paper sizes, material densities) are
 published engineering facts, not copyrighted expression. The DXF, SVG, STEP and 3MF readers/writers implement public
 file-format specifications; no vendor SDK or sample code is included.
 
 ## Trademarks
 
-"Autodesk" and "Fusion 360" are trademarks of Autodesk, Inc. Fission360 is an independent open-source project and is
+"Autodesk" and "Fusion 360" are trademarks of Autodesk, Inc. Kerfline is an independent open-source project and is
 **not affiliated with, endorsed by or sponsored by Autodesk**. Fusion 360 is named only to describe the workflow this
 project is modelled on (nominative use). Other product names belong to their owners.

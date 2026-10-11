@@ -2,8 +2,8 @@ import math
 
 import pytest
 
-from fission360.core.expressions import ExpressionError, evaluate, to_angle, to_length
-from fission360.core.parameters import ParameterTable
+from kerfline.core.expressions import ExpressionError, evaluate, to_angle, to_length
+from kerfline.core.parameters import ParameterTable
 
 
 def test_units_and_math():
